@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Local SQLite database (production uses PostgreSQL)
+*.db
+*.sqlite3
+
+# Environment files (secrets are injected at deploy time)
+.env
+.env.*
+!.env.example
+
+# Tests
+test_*.py
+*_test.py
+
+# IDE / OS
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Misc docs
+*.md

@@ -1,0 +1,54 @@
+# Cloud Build configuration for Cuisinee backend
+# Triggered manually via deploy.ps1 or automatically via Cloud Build trigger
+#
+# Environment variables substituted by deploy.ps1:
+#   _SERVICE_NAME   – Cloud Run service name   (default: cuisinee-backend)
+#   _REGION         – Deployment region         (default: us-central1)
+#   _PROJECT_ID     – GCP project ID
+
+# Cloud Build configuration for Cuisinee backend
+# Handles ONLY: build + push to Artifact Registry
+# Deployment to Cloud Run is done by deploy.ps1 which has local .env access.
+#
+# Manual invocation (from workspace root):
+#   gcloud builds submit . --config cloudbuild.yaml --substitutions _IMAGE_TAG=<sha>
+#
+# Substitutions:
+#   _SERVICE_NAME   – image name in registry  (default: cuisinee-backend)
+#   _REGION         – Artifact Registry region (default: us-central1)
+#   _IMAGE_TAG      – image tag               (default: latest)
+
+substitutions:
+  _SERVICE_NAME: cuisinee-backend
+  _REGION: us-central1
+  _IMAGE_TAG: latest   # override with --substitutions _IMAGE_TAG=$(git rev-parse --short HEAD)
+
+steps:
+  # ── Step 1: Build the container image ────────────────────────────────────
+  - name: "gcr.io/cloud-builders/docker"
+    id: build
+    args:
+      - build
+      - --tag
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/cuisinee/${_SERVICE_NAME}:${_IMAGE_TAG}"
+      - --tag
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/cuisinee/${_SERVICE_NAME}:latest"
+      - --file
+      - backend/Dockerfile
+      - backend/
+
+  # ── Step 2: Push all tags to Artifact Registry ───────────────────────────
+  - name: "gcr.io/cloud-builders/docker"
+    id: push
+    args:
+      - push
+      - --all-tags
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/cuisinee/${_SERVICE_NAME}"
+
+images:
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/cuisinee/${_SERVICE_NAME}:${_IMAGE_TAG}"
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/cuisinee/${_SERVICE_NAME}:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+

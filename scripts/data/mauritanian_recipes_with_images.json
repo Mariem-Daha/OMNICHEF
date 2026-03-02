@@ -1,0 +1,321 @@
+{
+  "generated_at": "2026-01-12T00:00:00Z",
+  "source": "Document (4).docx",
+  "reference": "Traditional Mauritanian & Maghrebi home-cooking methods",
+  "status": "needs_review",
+  "notes": [
+    "Original document had corrupted/overlapping JSON text",
+    "Some recipes may be incomplete and need verification",
+    "No images were found in the source document",
+    "Recipes are in Arabic and need English translations for import"
+  ],
+  "recipes": [
+    {
+      "name": "مارو اللحم",
+      "name_en": "Maro with Meat",
+      "serves": 4,
+      "total_time_minutes": 60,
+      "ingredients": [
+        "500 غرام لحم",
+        "1 بصلة",
+        "2 طماطم",
+        "2 أكواب أرز",
+        "3 ملاعق زيت",
+        "ملح",
+        "فلفل أسود",
+        "ماء"
+      ],
+      "steps": [],
+      "status": "incomplete - steps missing from source",
+      "image_search_result": {
+        "url": "https://i.ytimg.com/vi/NfH09BKWcSM/hq720.jpg?sqp=-oaymwEhCK4FEIIDSFryq4qpAxMIARUAAAAAGAElAADIQj0AgKJD&rs=AOn4CLCmX2L9jMTNKsMXAipDUYeta7K7yA",
+        "source": "www.youtube.com",
+        "title": "Mauritania Foods | 🇲🇷 | Top Traditional Mauritania Foods ...",
+        "width": 686,
+        "height": 386
+      }
+    },
+    {
+      "name": "الحريرة المغربية باللحم",
+      "name_en": "Moroccan Harira with Meat",
+      "serves": 6,
+      "total_time_minutes": 90,
+      "ingredients": [
+        "لحم",
+        "بصل",
+        "كرفس",
+        "طماطم",
+        "عدس",
+        "حمص",
+        "قزبر",
+        "معدنوس",
+        "شعيرية",
+        "دقيق",
+        "توابل",
+        "زيت",
+        "ماء"
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "action": "تشويح اللحم",
+          "time_minutes": 15,
+          "details": "يُقلّى اللحم مع البصل والكرفس."
+        },
+        {
+          "step": 2,
+          "action": "إضافة المكونات",
+          "time_minutes": 30,
+          "details": "تُضاف الطماطم والبقول والتوابل والماء."
+        },
+        {
+          "step": 3,
+          "action": "التكثيف",
+          "time_minutes": 20,
+          "details": "تُضاف الشعيرية وخليط الدقيق تدريجيًا."
+        },
+        {
+          "step": 4,
+          "action": "الطهي النهائي",
+          "time_minutes": 25,
+          "details": "تُترك حتى تصبح الحريرة كثيفة ومتوازنة."
+        }
+      ],
+      "status": "complete",
+      "image_search_result": {
+        "url": "https://www.shutterstock.com/image-photo/thieboudienne-or-ceebu-jen-national-600nw-2661140173.jpg",
+        "source": "www.shutterstock.com",
+        "title": "26+ Thousand Dish Africa Royalty-Free Images, Stock Photos ...",
+        "width": 600,
+        "height": 400
+      }
+    },
+    {
+      "name": "السفة بالخضار والدجاج",
+      "name_en": "Seffa with Vegetables and Chicken",
+      "serves": 5,
+      "total_time_minutes": 65,
+      "ingredients": [
+        "سفة",
+        "دجاج",
+        "بصل",
+        "جزر",
+        "جزر أبيض",
+        "فلفل",
+        "ثوم",
+        "زيت",
+        "ملح",
+        "فلفل أسود",
+        "ماء"
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "action": "تشويح الخضار",
+          "time_minutes": 15,
+          "details": "تُقلى الخضار والثوم حتى تذبل."
+        },
+        {
+          "step": 2,
+          "action": "تحمير الدجاج",
+          "time_minutes": 10,
+          "details": "تُضاف قطع الدجاج وتُحرّك."
+        },
+        {
+          "step": 3,
+          "action": "الطهي",
+          "time_minutes": 20,
+          "details": "يُضاف الماء ويُترك حتى ينضج الدجاج."
+        },
+        {
+          "step": 4,
+          "action": "تحضير السفة",
+          "time_minutes": 20,
+          "details": "تُبخّر السفة وتُقدَّم مع الصوص."
+        }
+      ],
+      "status": "complete",
+      "image_search_result": {
+        "url": "https://res.cloudinary.com/ddjuftfy2/image/upload/f_webp,c_fill,q_auto,w_500/memphis/xlarge/f46aaa4c78c1b11d8706b8592837220d.webp",
+        "source": "www.memphistours.com",
+        "title": "Traditional Food in Morocco | Authentic Moroccan Food",
+        "width": 500,
+        "height": 333
+      }
+    },
+    {
+      "name": "الكسكس باللبن",
+      "name_en": "Couscous with Milk",
+      "serves": 4,
+      "total_time_minutes": 30,
+      "ingredients": [
+        "كسكس مطبوخ",
+        "لبن",
+        "سكر (اختياري)"
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "action": "تحضير الكسكس",
+          "time_minutes": 20,
+          "details": "يُبخّر الكسكس حتى ينضج ويصبح خفيف الحبيبات."
+        },
+        {
+          "step": 2,
+          "action": "إضافة اللبن",
+          "time_minutes": 10,
+          "details": "يُسكب اللبن تدريجيًا حتى القوام المطلوب."
+        }
+      ],
+      "status": "complete",
+      "image_search_result": {
+        "url": "http://globaltableadventure.com/wp-content/uploads/2012/03/mauritania.food_.img_2278.jpg",
+        "source": "globaltableadventure.com",
+        "title": "Rainy Day Steamed Couscous | Global Table Adventure",
+        "width": 800,
+        "height": 533
+      }
+    },
+    {
+      "name": "مارو مع صوص",
+      "name_en": "Maro with Sauce",
+      "serves": 4,
+      "total_time_minutes": 55,
+      "ingredients": [
+        "لحم",
+        "أرز",
+        "بصل",
+        "ثوم",
+        "طماطم",
+        "زيت",
+        "ملح",
+        "فلفل",
+        "ماء"
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "action": "تحضير الصوص",
+          "time_minutes": 30,
+          "details": "يُقلى البصل والثوم واللحم ثم تُضاف الطماطم والماء."
+        },
+        {
+          "step": 2,
+          "action": "طهي الأرز",
+          "time_minutes": 25,
+          "details": "يُطهى الأرز في قدر منفصل."
+        }
+      ],
+      "status": "complete",
+      "image_search_result": {
+        "url": "https://i.ytimg.com/vi/NfH09BKWcSM/hq720.jpg?sqp=-oaymwEhCK4FEIIDSFryq4qpAxMIARUAAAAAGAElAADIQj0AgKJD&rs=AOn4CLCmX2L9jMTNKsMXAipDUYeta7K7yA",
+        "source": "www.youtube.com",
+        "title": "Mauritania Foods | 🇲🇷 | Top Traditional Mauritania Foods ...",
+        "width": 686,
+        "height": 386
+      }
+    },
+    {
+      "name": "الشعرية بالدجاج أو اللحم",
+      "name_en": "Vermicelli with Chicken or Meat",
+      "serves": 4,
+      "total_time_minutes": 45,
+      "ingredients": [
+        "شعرية",
+        "لحم أو دجاج",
+        "بصل",
+        "ثوم",
+        "طماطم",
+        "زيت",
+        "ملح",
+        "بهارات",
+        "ماء أو مرق"
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "action": "تشويح الأساس",
+          "time_minutes": 10,
+          "details": "يُقلى البصل والثوم ثم اللحم."
+        },
+        {
+          "step": 2,
+          "action": "إضافة الطماطم",
+          "time_minutes": 10,
+          "details": "تُضاف الطماطم والبهارات ويُترك ليغلي."
+        },
+        {
+          "step": 3,
+          "action": "طهي الشعرية",
+          "time_minutes": 25,
+          "details": "تُضاف الشعرية وتُترك حتى تمتص الصوص."
+        }
+      ],
+      "status": "complete",
+      "image_search_result": {
+        "url": "https://travelfoodatlas.com/wp-content/uploads/2018/04/sapa-sui-e1729760848485.jpg",
+        "source": "travelfoodatlas.com",
+        "title": "Traditional Sapa Sui (Samoan Chop Suey) Recipe | Travel Food Atlas",
+        "width": 800,
+        "height": 533
+      }
+    },
+    {
+      "name": "طاجين بنافة",
+      "name_en": "Tajine Banafa",
+      "serves": 4,
+      "total_time_minutes": 50,
+      "ingredients": [
+        "لحم أو دجاج",
+        "بصل",
+        "طماطم",
+        "فلفل",
+        "بطاطس",
+        "زيت",
+        "ملح",
+        "بهارات",
+        "ماء"
+      ],
+      "steps": [
+        {
+          "step": 1,
+          "action": "تشويح البصل",
+          "time_minutes": 5,
+          "details": "يُقلى البصل حتى يلين."
+        },
+        {
+          "step": 2,
+          "action": "تحمير اللحم",
+          "time_minutes": 10,
+          "details": "يُضاف اللحم أو الدجاج ويُحرّك."
+        },
+        {
+          "step": 3,
+          "action": "إضافة الصوص",
+          "time_minutes": 20,
+          "details": "تُضاف الطماطم، الفلفل، البهارات والماء."
+        },
+        {
+          "step": 4,
+          "action": "إضافة البطاطس",
+          "time_minutes": 15,
+          "details": "تُضاف البطاطس ويُترك حتى ينضج."
+        }
+      ],
+      "status": "complete",
+      "image_search_result": {
+        "url": "https://globalvoices.org/wp-content/uploads/2025/03/Screenshot-2025-03-21-at-12.20.04%E2%80%AFp.m-800x450.png",
+        "source": "globalvoices.org",
+        "title": "Tradition meets influence: The changing flavors of Ramadan in ...",
+        "width": 800,
+        "height": 450
+      }
+    }
+  ],
+  "image_search_completed": true,
+  "image_search_stats": {
+    "found": 7,
+    "failed": 0,
+    "total": 7
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter pub get:*)",
+      "Bash(find:*)",
+      "Bash(ls:*)"
+    ]
+  }
+}

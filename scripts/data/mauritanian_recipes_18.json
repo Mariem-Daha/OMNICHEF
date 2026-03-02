@@ -1,0 +1,866 @@
+{
+    "generated_at": "2026-01-12T12:00:00Z",
+    "source": "Document (4) (1).docx",
+    "reference": "Traditional Mauritanian & Maghrebi home-cooking methods",
+    "status": "needs_review",
+    "notes": [
+        "Original document had corrupted/overlapping JSON text",
+        "Recipe details extracted and structured manually",
+        "Recipes are in Arabic - English translations added",
+        "Some recipes may need verification of ingredients/steps"
+    ],
+    "recipes": [
+        {
+            "id": 1,
+            "name": "مارو اللحم",
+            "name_en": "Maro with Meat",
+            "cuisine": "Mauritanian",
+            "serves": 4,
+            "total_time_minutes": 60,
+            "ingredients": [
+                "500 غ لحم",
+                "1 بصلة مفرومة",
+                "2 طماطم مفرومة",
+                "2 أكواب أرز",
+                "3 ملاعق زيت",
+                "ملح",
+                "فلفل أسود",
+                "ماء"
+            ],
+            "ingredients_en": [
+                "500g meat",
+                "1 chopped onion",
+                "2 chopped tomatoes",
+                "2 cups rice",
+                "3 tablespoons oil",
+                "Salt",
+                "Black pepper",
+                "Water"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "تحضير المكونات",
+                    "details": "يُغسل اللحم جيدًا، يُفرم البصل والطماطم"
+                },
+                {
+                    "step": 2,
+                    "action": "تحمير اللحم",
+                    "details": "يُقلى اللحم مع البصل حتى يتحمر"
+                },
+                {
+                    "step": 3,
+                    "action": "إضافة الطماطم",
+                    "details": "تُضاف الطماطم والتوابل"
+                },
+                {
+                    "step": 4,
+                    "action": "طهي الأرز",
+                    "details": "يُضاف الأرز مع ماء إضافي ويُترك حتى ينضج"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 2,
+            "name": "طاجين الدجاج",
+            "name_en": "Chicken Tagine",
+            "cuisine": "Mauritanian",
+            "serves": 4,
+            "total_time_minutes": 70,
+            "ingredients": [
+                "دجاجة كاملة مقطعة",
+                "بصل",
+                "ثوم",
+                "طماطم",
+                "بطاطس",
+                "جزر",
+                "زيتون",
+                "زيت زيتون",
+                "بهارات مشكلة",
+                "ملح"
+            ],
+            "ingredients_en": [
+                "1 whole chicken, cut",
+                "Onion",
+                "Garlic",
+                "Tomatoes",
+                "Potatoes",
+                "Carrots",
+                "Olives",
+                "Olive oil",
+                "Mixed spices",
+                "Salt"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "تحضير الدجاج",
+                    "details": "يُنظف الدجاج ويُتبل بالبهارات"
+                },
+                {
+                    "step": 2,
+                    "action": "تشويح البصل",
+                    "details": "يُقلى البصل والثوم"
+                },
+                {
+                    "step": 3,
+                    "action": "إضافة الدجاج",
+                    "details": "يُضاف الدجاج ويُحمر"
+                },
+                {
+                    "step": 4,
+                    "action": "إضافة الخضار",
+                    "details": "تُضاف الطماطم والخضار والماء"
+                },
+                {
+                    "step": 5,
+                    "action": "الطهي",
+                    "details": "يُترك على نار هادئة حتى ينضج"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 3,
+            "name": "مارو الحوت",
+            "name_en": "Fish Maro",
+            "cuisine": "Mauritanian",
+            "serves": 4,
+            "total_time_minutes": 50,
+            "ingredients": [
+                "سمك طازج",
+                "أرز",
+                "بصل",
+                "طماطم",
+                "ثوم",
+                "زيت",
+                "ملح",
+                "بهارات",
+                "ماء"
+            ],
+            "ingredients_en": [
+                "Fresh fish",
+                "Rice",
+                "Onion",
+                "Tomatoes",
+                "Garlic",
+                "Oil",
+                "Salt",
+                "Spices",
+                "Water"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "تحضير السمك",
+                    "details": "يُنظف السمك ويُتبل"
+                },
+                {
+                    "step": 2,
+                    "action": "تحضير الصوص",
+                    "details": "يُقلى البصل والطماطم"
+                },
+                {
+                    "step": 3,
+                    "action": "طهي السمك",
+                    "details": "يُضاف السمك ويُطهى"
+                },
+                {
+                    "step": 4,
+                    "action": "طهي الأرز",
+                    "details": "يُطهى الأرز منفصلاً ويُقدم مع السمك"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 4,
+            "name": "الكسكسي الموريتاني",
+            "name_en": "Mauritanian Couscous",
+            "cuisine": "Mauritanian",
+            "serves": 6,
+            "total_time_minutes": 90,
+            "ingredients": [
+                "كسكس",
+                "لحم غنم",
+                "بصل",
+                "جزر",
+                "كوسة",
+                "حمص",
+                "زبيب",
+                "سمن",
+                "ملح",
+                "بهارات"
+            ],
+            "ingredients_en": [
+                "Couscous",
+                "Lamb meat",
+                "Onion",
+                "Carrots",
+                "Zucchini",
+                "Chickpeas",
+                "Raisins",
+                "Ghee",
+                "Salt",
+                "Spices"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "تحضير المرق",
+                    "details": "يُطهى اللحم مع البصل والبهارات"
+                },
+                {
+                    "step": 2,
+                    "action": "إضافة الخضار",
+                    "details": "تُضاف الخضار تدريجياً"
+                },
+                {
+                    "step": 3,
+                    "action": "تبخير الكسكس",
+                    "details": "يُبخر الكسكس فوق المرق"
+                },
+                {
+                    "step": 4,
+                    "action": "التقديم",
+                    "details": "يُقدم الكسكس مع اللحم والخضار والمرق"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 5,
+            "name": "طاجين بنافة",
+            "name_en": "Tajine Banafa",
+            "cuisine": "Mauritanian",
+            "serves": 4,
+            "total_time_minutes": 50,
+            "ingredients": [
+                "لحم أو دجاج",
+                "بصل",
+                "طماطم",
+                "فلفل",
+                "بطاطس",
+                "زيت",
+                "ملح",
+                "بهارات",
+                "ماء"
+            ],
+            "ingredients_en": [
+                "Meat or chicken",
+                "Onion",
+                "Tomatoes",
+                "Pepper",
+                "Potatoes",
+                "Oil",
+                "Salt",
+                "Spices",
+                "Water"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "تشويح البصل",
+                    "details": "يُقلى البصل حتى يلين"
+                },
+                {
+                    "step": 2,
+                    "action": "تحمير اللحم",
+                    "details": "يُضاف اللحم أو الدجاج ويُحرّك"
+                },
+                {
+                    "step": 3,
+                    "action": "إضافة الصوص",
+                    "details": "تُضاف الطماطم والفلفل والبهارات والماء"
+                },
+                {
+                    "step": 4,
+                    "action": "إضافة البطاطس",
+                    "details": "تُضاف البطاطس ويُترك حتى ينضج"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 6,
+            "name": "الشعرية بالدجاج أو اللحم",
+            "name_en": "Vermicelli with Chicken or Meat",
+            "cuisine": "Mauritanian",
+            "serves": 4,
+            "total_time_minutes": 45,
+            "ingredients": [
+                "شعرية",
+                "لحم أو دجاج",
+                "بصل",
+                "ثوم",
+                "طماطم",
+                "زيت",
+                "ملح",
+                "بهارات",
+                "ماء أو مرق"
+            ],
+            "ingredients_en": [
+                "Vermicelli",
+                "Meat or chicken",
+                "Onion",
+                "Garlic",
+                "Tomatoes",
+                "Oil",
+                "Salt",
+                "Spices",
+                "Water or broth"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "تشويح الأساس",
+                    "details": "يُقلى البصل والثوم ثم اللحم"
+                },
+                {
+                    "step": 2,
+                    "action": "إضافة الطماطم",
+                    "details": "تُضاف الطماطم والبهارات ويُترك ليغلي"
+                },
+                {
+                    "step": 3,
+                    "action": "طهي الشعرية",
+                    "details": "تُضاف الشعرية وتُترك حتى تمتص الصوص"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 7,
+            "name": "مارو مع صوص",
+            "name_en": "Maro with Sauce",
+            "cuisine": "Mauritanian",
+            "serves": 4,
+            "total_time_minutes": 55,
+            "ingredients": [
+                "لحم",
+                "أرز",
+                "بصل",
+                "ثوم",
+                "طماطم",
+                "زيت",
+                "ملح",
+                "فلفل",
+                "ماء"
+            ],
+            "ingredients_en": [
+                "Meat",
+                "Rice",
+                "Onion",
+                "Garlic",
+                "Tomatoes",
+                "Oil",
+                "Salt",
+                "Pepper",
+                "Water"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "تحضير الصوص",
+                    "details": "يُقلى البصل والثوم واللحم ثم تُضاف الطماطم والماء"
+                },
+                {
+                    "step": 2,
+                    "action": "طهي الأرز",
+                    "details": "يُطهى الأرز في قدر منفصل"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 8,
+            "name": "الشاي الموريتاني (الأتاي)",
+            "name_en": "Mauritanian Tea (Atay)",
+            "cuisine": "Mauritanian",
+            "serves": 4,
+            "total_time_minutes": 20,
+            "ingredients": [
+                "شاي أخضر صيني",
+                "سكر",
+                "نعناع طازج",
+                "ماء"
+            ],
+            "ingredients_en": [
+                "Chinese green tea",
+                "Sugar",
+                "Fresh mint",
+                "Water"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "غسل الشاي",
+                    "details": "يُغسل الشاي بماء ساخن لإزالة الغبار"
+                },
+                {
+                    "step": 2,
+                    "action": "غلي الشاي",
+                    "details": "يُضاف الماء والسكر ويُغلى"
+                },
+                {
+                    "step": 3,
+                    "action": "إضافة النعناع",
+                    "details": "يُضاف النعناع الطازج"
+                },
+                {
+                    "step": 4,
+                    "action": "التقديم",
+                    "details": "يُسكب من ارتفاع لتكوين الرغوة"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 9,
+            "name": "الشاي مع لكسور",
+            "name_en": "Tea with Laksour",
+            "cuisine": "Mauritanian",
+            "serves": 4,
+            "total_time_minutes": 25,
+            "ingredients": [
+                "شاي أخضر",
+                "سكر",
+                "نعناع",
+                "لكسور (حلوى تقليدية)",
+                "ماء"
+            ],
+            "ingredients_en": [
+                "Green tea",
+                "Sugar",
+                "Mint",
+                "Laksour (traditional sweets)",
+                "Water"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "تحضير الشاي",
+                    "details": "يُحضر الشاي بالطريقة التقليدية"
+                },
+                {
+                    "step": 2,
+                    "action": "تقديم اللكسور",
+                    "details": "يُقدم مع اللكسور كضيافة"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 10,
+            "name": "القهوة العربية الموريتانية",
+            "name_en": "Mauritanian Arabic Coffee",
+            "cuisine": "Mauritanian",
+            "serves": 4,
+            "total_time_minutes": 15,
+            "ingredients": [
+                "قهوة عربية مطحونة",
+                "هيل",
+                "زعفران (اختياري)",
+                "ماء"
+            ],
+            "ingredients_en": [
+                "Ground Arabic coffee",
+                "Cardamom",
+                "Saffron (optional)",
+                "Water"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "غلي القهوة",
+                    "details": "تُغلى القهوة مع الماء على نار هادئة"
+                },
+                {
+                    "step": 2,
+                    "action": "إضافة الهيل",
+                    "details": "يُضاف الهيل والزعفران"
+                },
+                {
+                    "step": 3,
+                    "action": "التقديم",
+                    "details": "تُقدم في فناجين صغيرة"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 11,
+            "name": "التمر بالسمن",
+            "name_en": "Dates with Ghee",
+            "cuisine": "Mauritanian",
+            "serves": 4,
+            "total_time_minutes": 10,
+            "ingredients": [
+                "تمر",
+                "سمن بلدي",
+                "دقيق محمص (اختياري)"
+            ],
+            "ingredients_en": [
+                "Dates",
+                "Local ghee",
+                "Roasted flour (optional)"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "تحضير التمر",
+                    "details": "يُنزع النوى من التمر"
+                },
+                {
+                    "step": 2,
+                    "action": "خلط السمن",
+                    "details": "يُخلط التمر مع السمن الدافئ"
+                },
+                {
+                    "step": 3,
+                    "action": "التقديم",
+                    "details": "يُقدم كحلوى تقليدية"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 12,
+            "name": "الزريك",
+            "name_en": "Zrig (Buttermilk Drink)",
+            "cuisine": "Mauritanian",
+            "serves": 4,
+            "total_time_minutes": 5,
+            "ingredients": [
+                "لبن رائب",
+                "ماء",
+                "سكر"
+            ],
+            "ingredients_en": [
+                "Buttermilk/Yogurt",
+                "Water",
+                "Sugar"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "الخلط",
+                    "details": "يُخلط اللبن مع الماء والسكر"
+                },
+                {
+                    "step": 2,
+                    "action": "التقديم",
+                    "details": "يُقدم بارداً"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 13,
+            "name": "الكسكس باللبن",
+            "name_en": "Couscous with Milk",
+            "cuisine": "Mauritanian",
+            "serves": 4,
+            "total_time_minutes": 30,
+            "ingredients": [
+                "كسكس مطبوخ",
+                "لبن",
+                "سكر (اختياري)"
+            ],
+            "ingredients_en": [
+                "Cooked couscous",
+                "Milk",
+                "Sugar (optional)"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "تحضير الكسكس",
+                    "details": "يُبخّر الكسكس حتى ينضج ويصبح خفيف الحبيبات"
+                },
+                {
+                    "step": 2,
+                    "action": "إضافة اللبن",
+                    "details": "يُسكب اللبن تدريجياً حتى القوام المطلوب"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 14,
+            "name": "طاجين الحوت مع البطاطس المقلية",
+            "name_en": "Fish Tagine with Fried Potatoes",
+            "cuisine": "Mauritanian",
+            "serves": 4,
+            "total_time_minutes": 60,
+            "ingredients": [
+                "سمك",
+                "بطاطس",
+                "بصل",
+                "طماطم",
+                "ثوم",
+                "فلفل حار",
+                "زيت للقلي",
+                "ملح",
+                "كمون"
+            ],
+            "ingredients_en": [
+                "Fish",
+                "Potatoes",
+                "Onion",
+                "Tomatoes",
+                "Garlic",
+                "Hot pepper",
+                "Frying oil",
+                "Salt",
+                "Cumin"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "قلي البطاطس",
+                    "details": "تُقلى البطاطس حتى تتحمر"
+                },
+                {
+                    "step": 2,
+                    "action": "تحضير الصوص",
+                    "details": "يُحضر صوص الطماطم مع البهارات"
+                },
+                {
+                    "step": 3,
+                    "action": "طهي السمك",
+                    "details": "يُضاف السمك ويُطهى في الصوص"
+                },
+                {
+                    "step": 4,
+                    "action": "التقديم",
+                    "details": "يُقدم مع البطاطس المقلية"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 15,
+            "name": "السفة بالخضار والدجاج",
+            "name_en": "Seffa with Vegetables and Chicken",
+            "cuisine": "Mauritanian",
+            "serves": 5,
+            "total_time_minutes": 65,
+            "ingredients": [
+                "سفة (شعرية رفيعة)",
+                "دجاج",
+                "بصل",
+                "جزر",
+                "جزر أبيض",
+                "فلفل",
+                "ثوم",
+                "زيت",
+                "ملح",
+                "فلفل أسود",
+                "ماء"
+            ],
+            "ingredients_en": [
+                "Seffa (thin vermicelli)",
+                "Chicken",
+                "Onion",
+                "Carrots",
+                "Parsnips",
+                "Pepper",
+                "Garlic",
+                "Oil",
+                "Salt",
+                "Black pepper",
+                "Water"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "تشويح الخضار",
+                    "details": "تُقلى الخضار والثوم حتى تذبل"
+                },
+                {
+                    "step": 2,
+                    "action": "تحمير الدجاج",
+                    "details": "تُضاف قطع الدجاج وتُحرّك"
+                },
+                {
+                    "step": 3,
+                    "action": "الطهي",
+                    "details": "يُضاف الماء ويُترك حتى ينضج الدجاج"
+                },
+                {
+                    "step": 4,
+                    "action": "تحضير السفة",
+                    "details": "تُبخّر السفة وتُقدَّم مع الصوص"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 16,
+            "name": "الحريرة المغربية باللحم",
+            "name_en": "Moroccan Harira with Meat",
+            "cuisine": "Mauritanian",
+            "serves": 6,
+            "total_time_minutes": 90,
+            "ingredients": [
+                "لحم",
+                "بصل",
+                "كرفس",
+                "طماطم",
+                "عدس",
+                "حمص",
+                "كزبرة",
+                "بقدونس",
+                "شعيرية",
+                "دقيق",
+                "توابل",
+                "زيت",
+                "ماء"
+            ],
+            "ingredients_en": [
+                "Meat",
+                "Onion",
+                "Celery",
+                "Tomatoes",
+                "Lentils",
+                "Chickpeas",
+                "Coriander",
+                "Parsley",
+                "Vermicelli",
+                "Flour",
+                "Spices",
+                "Oil",
+                "Water"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "تشويح اللحم",
+                    "details": "يُقلّى اللحم مع البصل والكرفس"
+                },
+                {
+                    "step": 2,
+                    "action": "إضافة المكونات",
+                    "details": "تُضاف الطماطم والبقول والتوابل والماء"
+                },
+                {
+                    "step": 3,
+                    "action": "التكثيف",
+                    "details": "تُضاف الشعيرية وخليط الدقيق تدريجيًا"
+                },
+                {
+                    "step": 4,
+                    "action": "الطهي النهائي",
+                    "details": "تُترك حتى تصبح الحريرة كثيفة ومتوازنة"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 17,
+            "name": "ياسا",
+            "name_en": "Yassa (Marinated Chicken/Fish)",
+            "cuisine": "Mauritanian",
+            "serves": 4,
+            "total_time_minutes": 75,
+            "ingredients": [
+                "دجاج أو سمك",
+                "بصل كثير (مفروم)",
+                "ليمون",
+                "خردل",
+                "زيت",
+                "فلفل حار",
+                "ملح"
+            ],
+            "ingredients_en": [
+                "Chicken or fish",
+                "Lots of onion (chopped)",
+                "Lemon",
+                "Mustard",
+                "Oil",
+                "Hot pepper",
+                "Salt"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "التتبيل",
+                    "details": "يُتبل الدجاج أو السمك بالليمون والخردل"
+                },
+                {
+                    "step": 2,
+                    "action": "تشويح البصل",
+                    "details": "يُقلى البصل حتى يصبح ذهبياً"
+                },
+                {
+                    "step": 3,
+                    "action": "شوي اللحم",
+                    "details": "يُشوى الدجاج أو السمك"
+                },
+                {
+                    "step": 4,
+                    "action": "الخلط والتقديم",
+                    "details": "يُخلط مع البصل ويُقدم"
+                }
+            ],
+            "status": "complete"
+        },
+        {
+            "id": 18,
+            "name": "الحساء بالخضروات",
+            "name_en": "Vegetable Soup",
+            "cuisine": "Mauritanian",
+            "serves": 4,
+            "total_time_minutes": 45,
+            "ingredients": [
+                "لحم",
+                "بطاطس",
+                "جزر",
+                "كوسة",
+                "بصل",
+                "طماطم",
+                "زيت",
+                "ملح",
+                "بهارات",
+                "ماء"
+            ],
+            "ingredients_en": [
+                "Meat",
+                "Potatoes",
+                "Carrots",
+                "Zucchini",
+                "Onion",
+                "Tomatoes",
+                "Oil",
+                "Salt",
+                "Spices",
+                "Water"
+            ],
+            "steps": [
+                {
+                    "step": 1,
+                    "action": "تحضير المكونات",
+                    "details": "تُقطع جميع الخضروات"
+                },
+                {
+                    "step": 2,
+                    "action": "طهي اللحم",
+                    "details": "يُطهى اللحم مع البصل"
+                },
+                {
+                    "step": 3,
+                    "action": "إضافة الخضار",
+                    "details": "تُضاف الخضار والماء"
+                },
+                {
+                    "step": 4,
+                    "action": "الطهي",
+                    "details": "يُترك حتى تنضج جميع المكونات"
+                }
+            ],
+            "status": "complete"
+        }
+    ]
+}

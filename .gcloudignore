@@ -1,0 +1,35 @@
+# Google Cloud ignore file — excludes files from gcloud builds submit uploads
+# This mirrors .gitignore but is used by the gcloud CLI
+
+# Frontend build artefacts (not needed for backend deployment)
+frontend/build/
+frontend/.dart_tool/
+frontend/android/.gradle/
+frontend/.gradle/
+
+# Backend virtual environment (dependencies installed in Dockerfile)
+backend/venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+
+# Local DB
+backend/*.db
+backend/*.sqlite3
+
+# Local env files (secrets injected by deploy script)
+backend/.env
+**/.env
+
+# IDE
+.vscode/
+.idea/
+
+# Scripts (not needed at runtime)
+scripts/
+
+# Node modules
+node_modules/
+
+# Git
+.git/
