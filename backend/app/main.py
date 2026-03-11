@@ -10,14 +10,18 @@ from starlette.responses import Response
 
 from .config import get_settings, bootstrap_gcp_credentials
 from .database import engine, Base
-from .routers import auth, recipes, users, chat, voice_live
+from .routers import auth, recipes, users, chat, voice_live, vision
 
 # ── Bootstrap GCP credentials FIRST (before any client is created) ───────────
 settings = get_settings()
 bootstrap_gcp_credentials(settings)
 
-# Create tables on startup
-Base.metadata.create_all(bind=engine)
+# Create tables on startup (don't crash if DB is temporarily unreachable)
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as _db_err:
+    print(f"[startup] WARNING: Could not create DB tables: {_db_err}")
+    print("[startup] Server will start anyway – DB tables will be created on first successful connection.")
 
 # Create FastAPI app
 app = FastAPI(
@@ -70,6 +74,7 @@ app.include_router(recipes.router, prefix="/api/recipes", tags=["Recipes"])
 app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(chat.router, prefix="/api/chat", tags=["AI Chat"])
 app.include_router(voice_live.router, prefix="/api", tags=["Voice Assistant"])
+app.include_router(vision.router, prefix="/api", tags=["Vision AI"])
 
 # Mount static files for serving AI-generated recipe images
 static_path = Path(__file__).parent.parent / "static"

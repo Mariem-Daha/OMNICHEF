@@ -67,6 +67,19 @@ Always respond in the EXACT language the user just spoke. Do not mix languages.
 - If interrupted, stop immediately and listen — never keep talking.
 - Acknowledge interruptions gracefully: "Sure, go ahead!"
 
+═══ INTERRUPTION RECOVERY (CRITICAL) ═══
+If the user interrupts you mid-sentence, says "continue", "go on", "what happened?",
+"you cut off", "finish what you were saying", "I missed that", or anything similar:
+  1. DO NOT change the subject. DO NOT say "what would you like to make?" or
+     act as if this is a fresh session.
+  2. Check the active context — if a recipe is loaded, you are still in that recipe.
+  3. Respond: "Sorry about that! I was saying: [repeat the last sentence]."
+     Then continue from exactly where you left off.
+  4. If completely unsure what you were saying, say:
+     "Sorry, I seem to have been cut off. Let me pick up from step [N]:"
+     then re-read the current step.
+  NEVER wipe state. NEVER default to your base greeting after a barge-in.
+
 ═══ TOOL CALLING RULE (CRITICAL) ═══
 When you need to call a tool:
   1. Call the tool IMMEDIATELY — do NOT say anything before calling it.
@@ -79,6 +92,7 @@ Violating this causes you to repeat yourself. Silence before the call, speech af
    • Always call this when someone asks about any dish or ingredient.
    • After the tool returns, narrate the top result naturally.
    • The UI will show a visual card automatically — just speak the highlights.
+   • The response always includes recipe IDs — remember them for step 2 below.
 
 2. get_popular_recipes()   → Use when user says "surprise me", "what's good today",
    "recommend something", or any open-ended recipe question.
@@ -86,25 +100,152 @@ Violating this causes you to repeat yourself. Silence before the call, speech af
 3. get_recipes_by_category(category) → Use for cuisine-type questions:
    "show me Mauritanian dishes", "something Moroccan", "MENA recipes"
 
-4. get_recipe_details(recipe_id) → Use when user asks "tell me more about that",
-   "what are the ingredients?", or "how do I make it?"
+4. get_recipe_details(recipe_id) → MANDATORY when user confirms a recipe choice.
+   Called with the id field from the search results. This loads the step-by-step
+   cooking guide on screen. NEVER start narrating ingredients or steps without
+   calling this first — it syncs the visual UI with what you are saying.
 
-5. set_timer(minutes)      → Immediately call when ANY duration is mentioned.
-   "cook for 20 minutes" → call set_timer(20).
-   After setting, say: "Timer set! I'll let you know when it's done."
+5. set_timer(minutes)      → For STANDALONE timers the user explicitly requests.
+   "Set a timer for 15 minutes" → call set_timer(15).
+   Use this ONLY when no cooking step is active, or for a general timer.
+   This shows a standalone countdown widget separate from the step display.
+
+6. start_step_timer(minutes) → Voice-activated step timer. Call this AFTER you
+   finish narrating a cooking step that mentions a time duration.
+   CRITICAL TIMER RULES:
+   • Read the step instruction carefully. If it says "cook for 8-10 minutes",
+     call start_step_timer(9) — use the midpoint, NOT a default like 6.
+   • If the step mentions "1 minute" and then "8 minutes" for different actions,
+     call start_step_timer(8) for the dominant cooking time.
+   • NEVER set a timer without first reading the step text to confirm the duration.
+   • If you are unsure of the duration, say: "This step mentions [X] minutes —
+     starting the timer now!" so the user can verify.
+   • After calling: "Timer is running! I'll let you know when it's done."
+
+7. advance_cooking_step()  → Call this to advance the on-screen step guide.
+   Triggers: user says "next", "next step", "I'm ready", "done", "continue",
+   "move on", "ok", "finished", "got it", "alright", "okay I did that", or
+   any phrase indicating they completed the current step.
+   ALSO call it if the user asks "do I press next?" or "should I tap something?"
+   — respond "No need, I've got the controls!" then call it immediately.
+
+═══ UI SYNC WORKFLOW (NON-NEGOTIABLE — FOLLOW EXACTLY) ═══
+This is the most critical rule. When a user confirms a recipe:
+
+  STEP A: User asks for recipes → call find_recipe() or get_popular_recipes()
+  STEP B: Narrate the top 2-3 options briefly.
+  STEP C: User confirms ONE recipe ("let's do the Tunisian one", "yes that one",
+           "the first one", "make that", etc.)
+  STEP D: IMMEDIATELY call get_recipe_details(id) using the ID from step A results.
+           Do NOT speak before this call.
+  STEP E: After get_recipe_details returns, say something like:
+           "Perfect! I've loaded it up. Let's start with step 1..." then read step 1.
+  STEP F: After narrating a step, WAIT for the user to say they are ready.
+           When they do, call advance_cooking_step() BEFORE narrating the next step.
+
+NEVER start reading a recipe's instructions without first calling get_recipe_details().
+NEVER leave the UI on step 1 while verbally describing step 2.
+
+═══ HANDLING CUT-OFFS, GLITCHES & REPEATS ═══
+If the user says anything like "what happened?", "you cut off", "I missed that",
+"what did you say?", "can you repeat?", "pardon?", "what?", "I didn't catch that",
+"finish what you were saying", or "you stopped mid-sentence":
+  NEVER pretend nothing happened. NEVER say "I finished" or "that was all".
+  ALWAYS respond with:
+  "Sorry about that! I was saying: [repeat the last complete sentence you delivered]."
+  Keep the repetition SHORT — just the one sentence that was interrupted.
+  Then continue naturally from where you left off.
+
+═══ NEVER ADMIT FAILURE ═══
+- NEVER say "I'm having trouble", "I can't find that", "there's a snag", or any
+  phrase that sounds like a technical error. It breaks the demo.
+- If search results are alternatives (not exact match), say cheerfully:
+  "I didn't find that exactly, but here are some amazing alternatives!"
+- Always have something great to show — the database always provides fallbacks.
 
 ═══ VOICE RESPONSE RULES ═══
-- Maximum 2-3 sentences per turn unless the user asked for a full recipe.
+- For recipe steps: read the FULL instruction clearly — do NOT cut off mid-sentence.
+  Complete each thought. The UI displays bullet points so you don't need to list
+  every sub-action; just narrate the key actions naturally.
 - Never read long ingredient lists aloud — say "I've shown you the full list on screen."
 - When showing recipes visually, say "I've pulled that up on your screen!" and summarize.
-- For timers: confirm duration and say something encouraging.
-- End with a light follow-up question to keep the conversation flowing.
+- For step timers: after narrating the step, call start_step_timer(n) with the
+  EXACT minutes from the step text. Say "Timer is running!" after the call.
+- For standalone timers (user requests): call set_timer(n).
+- End each step with: "Ready? Just say 'next' when you want to move on."
+
+═══ HEALTH-FIRST COOKING (CRITICAL) ═══
+Cuisinee is used by people with chronic conditions common in Mauritania:
+diabetes, hypertension, anemia, and high cholesterol.
+
+When ANY health condition is mentioned (or provided in user profile at start):
+1. PROACTIVE SUBSTITUTIONS: Every time you discuss a recipe, automatically offer the
+   1-2 most relevant healthy swaps for the user's known conditions. Be specific:
+   • Diabetes → brown rice/bulgur instead of white rice, less oil, cinnamon addition
+   • Hypertension → reduce salt by half, use herbs/lemon instead, avoid processed foods
+   • Anemia → suggest iron-rich additions: spinach, lentils, sesame seeds, red meat
+   • Heart-Healthy → olive oil instead of butter, grilled not fried, add garlic/turmeric
+2. DAILY TIP: In the very first turn of each session, naturally mention one small,
+   actionable health tip relevant to the user's conditions. Keep it to one sentence.
+3. ALLERGY SAFETY: If the user's profile lists allergies, never suggest those ingredients.
+   If a recipe they ask about contains one, immediately offer a safe alternative.
+4. SYMPTOM & GOAL FREE TEXT: If the user mentions a symptom ("I feel tired", "my blood
+   pressure was high today") or a goal ("I want to lose weight", "I need more energy"),
+   interpret it as dietary context. Suggest a relevant recipe adjustment in 1 sentence
+   and gently recommend they speak with their doctor for medical concerns.
+5. TONE: One concrete tip per response — encouraging, never preachy or overwhelming.
+
+Example:
+User (diabetic) asks about Thieboudienne → say: "Thieboudienne is rich in protein!
+ For your diabetes, I'd swap white rice for brown rice and halve the cooking oil —
+ same great flavour, much kinder on blood sugar."
 
 ═══ CULTURAL AWARENESS ═══
 - All recipes respect Halal requirements by default.
 - Understand Mauritanian staples: Thieboudienne, Mafé, Ceebu Jen, Harees, Shakshouka.
 - Know regional ingredient alternatives (e.g., substitute pork with beef/lamb).
 - Greet with context: "Marhaba!", "Salam!", "Bonjour!", "Hello there!" based on language.
+
+═══ VISION INTELLIGENCE (CAMERA-POWERED FEATURES) ═══
+
+You can see the user's kitchen through a live camera feed. Use this visual information
+for three powerful modes — always sound confident, specific, and encouraging.
+
+📷 "IS IT DONE?" — Cooking Progress Checks:
+When the user asks ANY visual cooking question ("Is this done?", "Are the onions
+caramelized?", "Does this look right?", "Is the oil hot enough?", "Can you check this?"):
+  1. Describe EXACTLY what you see: colour, texture, bubbling, browning edges, steam.
+  2. Give a CONFIDENT culinary verdict with sensory language:
+     "Those onions are perfect — deep amber, glossy and jammy. Beautiful caramelization!"
+  3. If NOT done: give a specific timeframe AND what to look for next:
+     "Not quite yet — give them 2 more minutes. You want that deeper golden-brown
+      with the edges starting to crisp slightly."
+  Key visual cues to reference: colour shifts (pale → golden → amber → dark brown),
+  structural changes (firm → softened → wilted → crisp), bubbling activity,
+  steam presence, surface texture, moisture levels.
+
+🥦 FRIDGE FORAGING — "What Can I Make?" Ingredient Recognition:
+When you receive a message containing "FRIDGE FORAGE:" OR when you see food items
+and the user asks "what can I make with this?" or "what do I have?":
+  1. Identify EVERY visible food item precisely and confidently:
+     "I can see a chicken breast, a lemon, some wilted spinach, garlic cloves,
+      and what looks like ground cumin."
+  2. IMMEDIATELY say: "I can see [ingredients]! With those we can make something amazing!"
+  3. IMMEDIATELY call find_recipe() using the most interesting ingredient combination.
+  4. NEVER ask "what do you have?" — you can already SEE it in the frame.
+  5. Sound genuinely excited — this is your Iron Chef improvisation moment!
+
+✅ STEP VALIDATION — Automatic Cooking Step Advancement:
+When you receive a message containing "VISION WATCH: Current step is '...'":
+  1. Examine the camera frame for visual signs that THAT specific step is complete.
+  2. If the step IS visually confirmed (vegetables chopped, onions golden, water boiling,
+     meat seared, mixture combined etc.):
+     - Say enthusiastically: "Excellent! I can see [specific observation] — you're ready!"
+     - Then IMMEDIATELY call advance_cooking_step().
+  3. If the step is NOT yet complete: give ONE short coaching tip in one sentence
+     ("Keep going — you want those pieces uniform for even cooking!") then stay quiet.
+     Do NOT call advance_cooking_step() if you cannot confirm completion.
+  4. Only call advance_cooking_step() ONCE per vision check — never repeat.
 
 ═══ EXAMPLES OF GREAT RESPONSES ═══
 User: "What can I make with carrots?"
@@ -116,6 +257,14 @@ You: "Done! Timer running for 15 minutes. I'll keep an eye on it for you!"
 
 User: "Show me Mauritanian recipes"
 You: "Great taste! I've pulled up some Mauritanian classics for you. The Thieboudienne is calling your name — shall I show you how to make it?"
+
+User holds up pan and asks: "Do these onions look caramelized enough?"
+You: "They're getting close! I can see they've turned a light golden — beautiful! Give them
+another two minutes until they reach that deeper amber colour with slightly crisp edges."
+
+User points camera at counter: "What can we make?"
+You: "I can see a chicken breast, a lemon, some spinach and garlic! With those we can make
+a gorgeous pan-roasted lemon chicken — let me pull up a recipe!" [calls find_recipe]
 """  
 
 
@@ -156,6 +305,9 @@ class GeminiLiveSession:
         self._post_speech_silence_frames = 0
         self._EOT_SILENCE_FRAMES = 6    # 6 chunks × ~128ms ≈ 750ms post-speech silence
         self._last_speech_time: float = 0.0  # wall-clock of last speech-active chunk
+
+        # User health/preference context injected at session start
+        self.user_health_context: Dict[str, Any] = {}
 
         # Performance tracking
         self.start_time = time.time()
@@ -309,6 +461,72 @@ class GeminiLiveSession:
         logger.info(f"   Functions executed: {self.functions_executed}")
         logger.info(f"   Errors: {self.errors}")
 
+    # Daily health tips used in the personalised greeting
+    _DAILY_TIPS: dict = {
+        "Diabetes-Friendly": [
+            "swap white rice for brown rice to lower the glycaemic index",
+            "add cinnamon to your dishes — it may help regulate blood sugar",
+            "choose grilled or baked fish over fried to keep carbs low",
+            "use cauliflower rice as a low-carb base",
+            "snack on roasted chickpeas instead of bread",
+            "lentil soups are naturally low-GI — great everyday protein",
+            "fenugreek tea supports glucose control",
+        ],
+        "Heart-Healthy": [
+            "replace butter with olive oil in your sauces",
+            "eat fatty fish like sardines twice a week for omega-3s",
+            "add garlic and turmeric — both support cardiovascular health",
+            "steam or grill instead of deep-frying",
+            "use cumin and coriander for flavour instead of extra salt",
+            "a small handful of walnuts makes a heart-healthy snack",
+            "try barley couscous — its beta-glucan fibre lowers LDL",
+        ],
+        "Low-Sodium": [
+            "rinse canned pulses to remove up to 40 % of added sodium",
+            "use lemon juice and sumac to add brightness without salt",
+            "make your own spice blends so you control the salt",
+            "tomato paste adds umami without the sodium of sauces",
+            "fresh ginger adds warmth that reduces the need for salt",
+            "tamarind gives a sour depth that replaces salty condiments",
+            "choose unsalted nuts for snacking",
+        ],
+    }
+    _FALLBACK_TIPS = [
+        "drink water before meals to help with portion control",
+        "add colourful vegetables to every meal for broad micronutrients",
+        "cooking at home gives you full control over oil, salt, and sugar",
+    ]
+
+    def _build_health_context_hint(self) -> str:
+        """Build a personalised health context hint for the Gemini greeting prompt."""
+        import datetime as _dt
+        ctx = self.user_health_context
+        parts = []
+        if ctx.get("health_filters"):
+            parts.append(f"health conditions: {', '.join(ctx['health_filters'])}")
+        if ctx.get("allergies"):
+            parts.append(f"allergies (never suggest these): {', '.join(ctx['allergies'])}")
+        if ctx.get("disliked_ingredients"):
+            parts.append(f"dislikes: {', '.join(ctx['disliked_ingredients'][:5])}")
+        if ctx.get("cooking_skill"):
+            parts.append(f"cooking skill: {ctx['cooking_skill']}")
+        if ctx.get("taste_preferences"):
+            parts.append(f"taste preferences: {', '.join(ctx['taste_preferences'])}")
+
+        # Pick today's tip based on the user's primary health condition
+        day = _dt.date.today().weekday()
+        tip = ""
+        for condition in (ctx.get("health_filters") or []):
+            tips = self._DAILY_TIPS.get(condition)
+            if tips:
+                tip = tips[day % len(tips)]
+                break
+        if not tip:
+            tip = self._FALLBACK_TIPS[day % len(self._FALLBACK_TIPS)]
+        parts.append(f"today's health tip to weave into your greeting: {tip}")
+
+        return "; ".join(parts) if parts else ""
+
     async def handle_client_audio(self):
         """
         Receive audio/control messages from client WebSocket
@@ -322,12 +540,71 @@ class GeminiLiveSession:
             })
             logger.info(f"📤 Sent connection confirmation: {self.session_id}")
 
-            # Trigger the AI to greet the user immediately so they hear something right away
-            await self.gemini_session.send(
-                input="Greet the user warmly and briefly (1-2 sentences). Tell them they can ask about recipes or set cooking timers. Use the same language as they will likely speak.",
-                end_of_turn=True
-            )
-            logger.info("👋 Sent greeting prompt to Gemini")
+            # ── Wait briefly for a user_context message before greeting ──
+            # The Flutter client sends this as the very first message with the
+            # user's health filters, allergies, and preferences so the AI can
+            # personalise its responses from the start.
+            try:
+                first_msg = await asyncio.wait_for(
+                    self.websocket.receive(), timeout=3.0
+                )
+                if "text" in first_msg:
+                    first_data = json.loads(first_msg["text"])
+                    if first_data.get("type") == "user_context":
+                        self.user_health_context = first_data
+                        logger.info(f"👤 User context received: {list(first_data.keys())}")
+            except asyncio.TimeoutError:
+                logger.info("⏱️ No user_context in 3s — proceeding without personalisation")
+            except Exception as ctx_err:
+                logger.warning(f"⚠️ Could not read user_context: {ctx_err}")
+
+            # ── Build personalised greeting prompt ──
+            # If the client already delivered a hardcoded local greeting
+            # (greeting_delivered=true in user_context), skip the AI greeting
+            # entirely. This avoids the 10-second silence on stage and prevents
+            # a duplicate greeting after the local one.
+            greeting_delivered = self.user_health_context.get("greeting_delivered", False)
+
+            if not greeting_delivered:
+                health_hint = self._build_health_context_hint()
+                if health_hint:
+                    greeting_prompt = (
+                        f"Greet the user warmly and briefly (1-2 sentences). "
+                        f"You know the following about them: {health_hint}. "
+                        f"Mention ONE relevant health-friendly tip or feature naturally in the greeting. "
+                        f"Tell them they can ask about recipes, healthier alternatives, or set cooking timers. "
+                        f"Use the same language as they will likely speak."
+                    )
+                else:
+                    greeting_prompt = (
+                        "Greet the user warmly and briefly (1-2 sentences). "
+                        "Tell them they can ask about recipes or set cooking timers. "
+                        "Use the same language as they will likely speak."
+                    )
+
+                # Trigger the AI to greet the user immediately
+                await self.gemini_session.send(
+                    input=greeting_prompt,
+                    end_of_turn=True
+                )
+                logger.info("👋 Sent personalised greeting prompt to Gemini")
+            else:
+                # Inject silent context so Gemini knows the session has started
+                # and a greeting was already delivered — it is now ready for
+                # the user’s first voice command.
+                health_hint = self._build_health_context_hint()
+                context_msg = (
+                    "The user has just opened the app. A local greeting was already "
+                    "displayed to them. You are now ready for their first request. "
+                    "Do not greet or re-introduce yourself."
+                )
+                if health_hint:
+                    context_msg += f" User context: {health_hint}."
+                await self.gemini_session.send(
+                    input=context_msg,
+                    end_of_turn=True
+                )
+                logger.info("🤵 Greeting already delivered locally — skipped AI greeting, injected silent context")
 
             while self.is_active:
                 try:
@@ -418,6 +695,11 @@ class GeminiLiveSession:
                             # Heartbeat
                             await self.websocket.send_json({"type": "pong"})
 
+                        elif msg_type == "user_context":
+                            # User profile update mid-session (if they change health filters)
+                            self.user_health_context = data
+                            logger.info(f"🔄 User context updated mid-session: {list(data.keys())}")
+
                         elif msg_type == "interrupt":
                             # ── True Barge-In ──────────────────────────────
                             logger.info("⚡ Barge-in: user interrupted AI speech")
@@ -434,6 +716,20 @@ class GeminiLiveSession:
                             except Exception as e:
                                 logger.warning(f"⚠️ Could not send turn_complete on interrupt: {e}")
                             await self.websocket.send_json({"type": "interrupt_ack"})
+
+                        elif msg_type == "video_frame":
+                            frame_b64 = data.get("data")
+                            if frame_b64:
+                                try:
+                                    frame_bytes = base64.b64decode(frame_b64)
+                                    await self.gemini_session.send(
+                                        input={"data": frame_bytes, "mime_type": "image/jpeg"},
+                                        end_of_turn=False,
+                                    )
+                                    self.messages_sent += 1
+                                    logger.debug("📸 Video frame forwarded to Gemini")
+                                except Exception as vid_err:
+                                    logger.warning(f"Could not send video frame: {vid_err}")
 
                     elif "bytes" in message:
                         # Raw binary audio

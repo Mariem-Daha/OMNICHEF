@@ -7,15 +7,27 @@ import 'core/providers/user_provider.dart';
 import 'core/providers/recipe_provider.dart';
 import 'core/services/api_service.dart';
 import 'features/onboarding/screens/onboarding_screen.dart';
+import 'features/onboarding/screens/preference_quiz_screen.dart';
 import 'features/auth/screens/login_screen.dart';
 import 'features/navigation/main_navigation.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
+  // Capture full stack for _debugDuringDeviceUpdate assertion
+  final originalOnError = FlutterError.onError;
+  FlutterError.onError = (FlutterErrorDetails details) {
+    if (details.toString().contains('_debugDuringDeviceUpdate')) {
+      debugPrint('=== _debugDuringDeviceUpdate STACK ===');
+      debugPrint(details.stack.toString());
+      debugPrint('======================================');
+    }
+    originalOnError?.call(details);
+  };
+
   // Initialize API service
   await ApiService().init();
-  
+
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
@@ -46,6 +58,7 @@ class OmniChefApp extends StatelessWidget {
             routes: {
               '/onboarding': (context) => const OnboardingScreen(),
               '/login': (context) => const LoginScreen(),
+              '/preferences': (context) => const PreferenceQuizScreen(),
               '/home': (context) => const MainNavigation(),
             },
           );

@@ -175,17 +175,23 @@ class QuickSuggestionButton extends StatefulWidget {
 class _QuickSuggestionButtonState extends State<QuickSuggestionButton> {
   bool _isPressed = false;
 
+  void _setPressed(bool value) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _isPressed = value);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    
+
     return GestureDetector(
-      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapDown: (_) => _setPressed(true),
       onTapUp: (_) {
-        setState(() => _isPressed = false);
+        _setPressed(false);
         widget.onTap?.call();
       },
-      onTapCancel: () => setState(() => _isPressed = false),
+      onTapCancel: () => _setPressed(false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
         transform: Matrix4.identity()..scale(_isPressed ? 0.96 : 1.0),

@@ -38,9 +38,6 @@ class Settings(BaseSettings):
     # When set, the file is decoded to /tmp/gcp-credentials.json at startup.
     google_credentials_json: str = ""
 
-    # Spoonacular Recipe API
-    spoonacular_api_key: str = ""  # Spoonacular API key for global recipes
-
     # Google Custom Search API (for recipe images)
     search_api: str = ""  # Google Custom Search API key
     search_engine_id: str = ""  # Custom Search Engine ID (cx)

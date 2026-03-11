@@ -52,8 +52,19 @@ async def chat(
                 for msg in request.conversation_history
             ]
         
+        # Build user health context from the authenticated user (if any)
+        user_context = None
+        if current_user:
+            user_context = {
+                "health_filters": current_user.health_filters or [],
+                "allergies": current_user.allergies or [],
+                "disliked_ingredients": current_user.disliked_ingredients or [],
+                "taste_preferences": current_user.taste_preferences or [],
+                "cooking_skill": current_user.cooking_skill or "Intermediate",
+            }
+
         # Generate response
-        response = await ai_service.chat(request.message, history)
+        response = await ai_service.chat(request.message, history, user_context=user_context)
         
         return ChatResponse(
             response=response,

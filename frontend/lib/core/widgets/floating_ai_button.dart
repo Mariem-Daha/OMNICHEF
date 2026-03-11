@@ -63,13 +63,17 @@ class _FloatingAIButtonState extends State<FloatingAIButton>
 
   void _handleLongPress() {
     HapticFeedback.heavyImpact();
-    setState(() => _isListening = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _isListening = true);
+    });
     widget.onLongPress();
 
     // Simulate listening duration
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted) {
-        setState(() => _isListening = false);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _isListening = false);
+        });
       }
     });
   }
@@ -204,11 +208,17 @@ class _DraggableFloatingAIButtonState extends State<DraggableFloatingAIButton>
 
   void _handleLongPress() {
     HapticFeedback.heavyImpact();
-    setState(() => _isListening = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _isListening = true);
+    });
     widget.onLongPress();
 
     Future.delayed(const Duration(seconds: 3), () {
-      if (mounted) setState(() => _isListening = false);
+      if (mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _isListening = false);
+        });
+      }
     });
   }
 
@@ -232,14 +242,17 @@ class _DraggableFloatingAIButtonState extends State<DraggableFloatingAIButton>
       top: _position.dy,
       child: GestureDetector(
         onPanUpdate: (details) {
-          setState(() {
-            _position += details.delta;
-            // Keep within screen bounds
-            final size = MediaQuery.of(context).size;
-            _position = Offset(
-              _position.dx.clamp(0, size.width - 56),
-              _position.dy.clamp(0, size.height - 56),
-            );
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            setState(() {
+              _position += details.delta;
+              // Keep within screen bounds
+              final size = MediaQuery.of(context).size;
+              _position = Offset(
+                _position.dx.clamp(0, size.width - 56),
+                _position.dy.clamp(0, size.height - 56),
+              );
+            });
           });
         },
         child: AnimatedBuilder(

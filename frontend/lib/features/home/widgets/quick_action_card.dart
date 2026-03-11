@@ -28,6 +28,12 @@ class QuickActionCard extends StatefulWidget {
 class _QuickActionCardState extends State<QuickActionCard> {
   bool _isPressed = false;
 
+  void _setPressed(bool value) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _isPressed = value);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -38,12 +44,12 @@ class _QuickActionCardState extends State<QuickActionCard> {
     }
     
     return GestureDetector(
-      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapDown: (_) => _setPressed(true),
       onTapUp: (_) {
-        setState(() => _isPressed = false);
+        _setPressed(false);
         widget.onTap?.call();
       },
-      onTapCancel: () => setState(() => _isPressed = false),
+      onTapCancel: () => _setPressed(false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOutQuint,
@@ -177,12 +183,12 @@ class _QuickActionCardState extends State<QuickActionCard> {
   // Compact card for mobile layout
   Widget _buildCompactCard(BuildContext context, bool isDark) {
     return GestureDetector(
-      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapDown: (_) => _setPressed(true),
       onTapUp: (_) {
-        setState(() => _isPressed = false);
+        _setPressed(false);
         widget.onTap?.call();
       },
-      onTapCancel: () => setState(() => _isPressed = false),
+      onTapCancel: () => _setPressed(false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOutQuint,

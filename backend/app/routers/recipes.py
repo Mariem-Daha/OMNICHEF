@@ -12,9 +12,6 @@ from ..models.recipe import Recipe, RecipeStep, NutritionInfo
 from ..models.user import User, SavedRecipe
 from ..schemas.recipe import RecipeResponse, RecipeListResponse, RecipeCreate
 from ..services.auth_service import get_current_user
-from ..services.spoonacular_service import SpoonacularService
-
-_spoonacular = SpoonacularService()
 
 router = APIRouter()
 
@@ -69,11 +66,18 @@ def list_recipes(
     current_user: User | None = Depends(get_current_user),
 ):
     """Get paginated list of all recipes."""
-    total = db.query(func.count(Recipe.id)).scalar()
+    mauritanian_cuisines = ['mauritania', 'mauritanian']
+    
+    total = (
+        db.query(func.count(Recipe.id))
+        .filter(func.lower(Recipe.cuisine).notin_(mauritanian_cuisines))
+        .scalar()
+    )
     
     recipes = (
         db.query(Recipe)
         .options(joinedload(Recipe.steps), joinedload(Recipe.nutrition))
+        .filter(func.lower(Recipe.cuisine).notin_(mauritanian_cuisines))
         .order_by(Recipe.created_at.desc())
         .offset((page - 1) * per_page)
         .limit(per_page)
@@ -203,66 +207,6 @@ def get_recipes_by_ingredients(
     matching_recipes.sort(key=lambda x: x[1], reverse=True)
     
     return [recipe_to_response(r, current_user) for r, _ in matching_recipes[:20]]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# GLOBAL RECIPES  (powered by Spoonacular)
-# ─────────────────────────────────────────────────────────────────────────────
-
-@router.get("/global/search")
-def search_global_recipes(
-    q: str = Query("", description="Search query"),
-    cuisine: str = Query("", description="Cuisine type (e.g. Italian, Mexican)"),
-    diet: str = Query("", description="Spoonacular diet label (vegan, ketogenic …)"),
-    intolerances: str = Query("", description="Comma-separated intolerances"),
-    health_tags: list[str] = Query([], description="App health tags to map to Spoonacular filters"),
-    number: int = Query(20, ge=1, le=50),
-    offset: int = Query(0, ge=0),
-):
-    """
-    Search global recipes via Spoonacular.
-    Returns rich data including full nutrition, steps and ingredients.
-    """
-    result = _spoonacular.search(
-        query=q,
-        cuisine=cuisine,
-        diet=diet,
-        intolerances=intolerances,
-        health_tags=health_tags,
-        number=number,
-        offset=offset,
-    )
-    return result  # {"results": [...], "totalResults": int}
-
-
-@router.get("/global/random")
-def random_global_recipes(
-    number: int = Query(12, ge=1, le=30),
-    tags: str = Query("", description="Comma-separated Spoonacular tags to filter random results"),
-):
-    """Return a random selection of global recipes with full nutrition data."""
-    return _spoonacular.get_random(number=number, tags=tags)
-
-
-@router.get("/global/leftovers")
-def global_leftovers(
-    ingredients: list[str] = Query(..., description="Available ingredients"),
-    number: int = Query(10, ge=1, le=20),
-):
-    """Find global recipes that use the given ingredients (leftover mode)."""
-    return _spoonacular.get_by_ingredients(ingredients=ingredients, number=number)
-
-
-@router.get("/global/{spoonacular_id}")
-def get_global_recipe(spoonacular_id: int):
-    """Get a single Spoonacular recipe by its numeric ID with full nutrition."""
-    recipe = _spoonacular.get_by_id(spoonacular_id)
-    if not recipe:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Spoonacular recipe {spoonacular_id} not found",
-        )
-    return recipe
 
 
 @router.get("/{recipe_id}", response_model=RecipeResponse)

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/providers/recipe_provider.dart';
@@ -9,15 +8,11 @@ import '../../../core/widgets/recipe_cards.dart';
 import '../../../core/widgets/text_fields.dart';
 import '../../../core/widgets/skeleton_loaders.dart';
 import '../../../core/utils/responsive.dart';
-import '../../recipes/screens/recipe_detail_screen.dart';
-import '../../leftover/screens/leftover_screen.dart';
-import '../../health_filters/screens/health_filters_screen.dart';
-import '../../recipes/screens/saved_recipes_screen.dart';
-import '../../recipes/screens/recipe_library_screen.dart';
-import '../../scanner/screens/ingredient_scanner_screen.dart';
-import '../widgets/quick_action_card.dart';
 import '../widgets/section_header.dart';
 import '../../chat/screens/voice_assistant_mode.dart';
+import '../../recipes/screens/recipe_detail_screen.dart';
+import '../../health_filters/screens/health_filters_screen.dart';
+import '../../recipes/screens/recipe_library_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -59,8 +54,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     // Simulate loading
     Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted) {
-        setState(() => _isLoading = false);
-        _animationController.forward();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            setState(() => _isLoading = false);
+            _animationController.forward();
+          }
+        });
       }
     });
   }
@@ -68,10 +67,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   void _startTipRotation() {
     Future.delayed(const Duration(seconds: 8), () {
       if (mounted) {
-        setState(() {
-          _currentTipIndex = (_currentTipIndex + 1) % _aiTips.length;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            setState(() {
+              _currentTipIndex = (_currentTipIndex + 1) % _aiTips.length;
+            });
+            _startTipRotation();
+          }
         });
-        _startTipRotation();
       }
     });
   }
@@ -103,27 +106,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final horizontalPadding = Responsive.horizontalPadding(context);
     
     return Scaffold(
-      floatingActionButton: Padding(
-        padding: const EdgeInsets.only(bottom: 80), // Move above nav bar
-        child: FloatingActionButton.extended(
-          onPressed: () {
-            Navigator.of(context).push(
-              PageRouteBuilder(
-                pageBuilder: (context, animation, secondaryAnimation) => 
-                  VoiceAssistantMode(onClose: () => Navigator.pop(context)),
-                transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                  return FadeTransition(opacity: animation, child: child);
-                },
-                fullscreenDialog: true,
-              ),
-            );
-          },
-          backgroundColor: AppColors.primary,
-          icon: const Icon(Icons.mic_rounded, color: Colors.white),
-          label: const Text('Ask AI', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-        ),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
       body: SafeArea(
         child: Stack(
           children: [
@@ -144,7 +126,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             height: isMobile ? 55 : 68,
                             margin: EdgeInsets.only(right: isMobile ? 12 : 16),
                             child: Image.asset(
-                              'assets/images/logo.png',
+                              'assets/images/gemini_logo.png',
                               fit: BoxFit.contain,
                               errorBuilder: (context, error, stackTrace) {
                                 return Icon(Icons.restaurant_menu_rounded,
@@ -178,63 +160,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                   fontSize: isMobile ? 18 : 22,
                                 ),
                               ),
-                              const SizedBox(height: 6),
-                              // Dynamic AI tip with animation
-                              AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 500),
-                                child: Container(
-                                  key: ValueKey(_currentTipIndex),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 5,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      colors: [
-                                        AppColors.secondary.withOpacity(isDark ? 0.15 : 0.2),
-                                        AppColors.primary.withOpacity(isDark ? 0.1 : 0.15),
-                                      ],
-                                    ),
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(
-                                      color: AppColors.secondary.withOpacity(0.2),
-                                    ),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        _getDailyTip()['icon'],
-                                        style: const TextStyle(fontSize: 12),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Flexible(
-                                        child: Text(
-                                          _getDailyTip()['tip'],
-                                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                            color: isDark 
-                                                ? AppColors.secondaryLight 
-                                                : AppColors.secondaryDark,
-                                            fontWeight: FontWeight.w500,
-                                            fontSize: 11,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Icon(
-                                        Icons.auto_awesome,
-                                        size: 11,
-                                        color: AppColors.secondary,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
+
                             ],
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        Column(
+                        const SizedBox(width: 12),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
                             // Theme toggle
                             GestureDetector(
@@ -242,29 +174,29 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                 context.read<ThemeProvider>().toggleTheme();
                               },
                               child: Container(
-                                width: isMobile ? 32 : 36,
-                                height: isMobile ? 32 : 36,
+                                width: 36,
+                                height: 36,
                                 decoration: BoxDecoration(
-                                  color: isDark 
-                                      ? AppColors.surfaceDark 
+                                  color: isDark
+                                      ? AppColors.surfaceDark
                                       : AppColors.surfaceLight,
                                   borderRadius: BorderRadius.circular(10),
                                   boxShadow: AppColors.softShadow,
                                 ),
                                 child: Icon(
                                   isDark ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
-                                  color: isDark 
-                                      ? AppColors.textPrimaryDark 
+                                  color: isDark
+                                      ? AppColors.textPrimaryDark
                                       : AppColors.textPrimaryLight,
-                                  size: isMobile ? 16 : 18,
+                                  size: 18,
                                 ),
                               ),
                             ),
-                            SizedBox(height: isMobile ? 6 : 8),
+                            const SizedBox(width: 10),
                             // Profile avatar
                             Container(
-                              width: isMobile ? 36 : 42,
-                              height: isMobile ? 36 : 42,
+                              width: 38,
+                              height: 38,
                               decoration: BoxDecoration(
                                 gradient: AppColors.warmGradient,
                                 borderRadius: BorderRadius.circular(12),
@@ -279,9 +211,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                               child: Center(
                                 child: Text(
                                   userName[0].toUpperCase(),
-                                  style: TextStyle(
+                                  style: const TextStyle(
                                     color: Colors.white,
-                                    fontSize: isMobile ? 14 : 16,
+                                    fontSize: 15,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
@@ -291,7 +223,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         ),
                       ],
                     ),
-                  ).animate().fade(duration: 400.ms, delay: 100.ms).slideY(begin: 0.2, end: 0),
+                  ),
                 ),
             
                 // Search Bar
@@ -299,7 +231,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   child: Padding(
                     padding: EdgeInsets.fromLTRB(horizontalPadding, isMobile ? 10 : 14, horizontalPadding, isMobile ? 10 : 14),
                     child: SearchTextField(
-                      hint: 'Search recipes, ingredients...',
+                      hint: 'Ask Gemini or search recipes, ingredients...',
                       onFilterTap: () {
                         Navigator.push(
                           context,
@@ -309,19 +241,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         );
                       },
                     ),
-                  ).animate().fade(duration: 400.ms, delay: 200.ms).slideY(begin: 0.2, end: 0),
+                  ),
                 ),
 
-                // Quick Actions - Responsive Grid
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-                    child: isMobile 
-                        ? _buildMobileQuickActions(recipeProvider)
-                        : _buildDesktopQuickActions(recipeProvider),
-                  ).animate().fade(duration: 400.ms, delay: 300.ms).slideY(begin: 0.2, end: 0),
-                ),
-            
                 // Daily Suggestion
                 SliverToBoxAdapter(
                   child: Padding(
@@ -350,61 +272,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           ),
                       ],
                     ),
-                  ).animate().fade(duration: 400.ms, delay: 400.ms).slideY(begin: 0.2, end: 0),
-                ),
-            
-                // Mauritanian Recipes
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(horizontalPadding, isMobile ? 28 : 36, horizontalPadding, isMobile ? 10 : 14),
-                    child: SectionHeader(
-                      title: 'Mauritanian Classics',
-                      subtitle: 'Traditional recipes from home',
-                      onViewAll: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const RecipeLibraryScreen(),
-                        ),
-                      ),
-                    ),
-                  ).animate().fade(duration: 400.ms, delay: 500.ms).slideX(begin: -0.1, end: 0),
-                ),
-
-                SliverToBoxAdapter(
-                  child: SizedBox(
-                    height: isMobile ? 280 : 320,
-                    child: _isLoading
-                        ? ListView.builder(
-                            scrollDirection: Axis.horizontal,
-                            padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-                            itemCount: 3,
-                            itemBuilder: (context, index) {
-                              return const RecipeCardSkeleton(isHorizontal: false);
-                            },
-                          )
-                        : ListView.builder(
-                            scrollDirection: Axis.horizontal,
-                            padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-                            itemCount: recipeProvider.mauritanianRecipes.length,
-                            itemBuilder: (context, index) {
-                              final recipe = recipeProvider.mauritanianRecipes[index];
-                              return Container(
-                                width: isMobile ? 180 : 220,
-                                margin: const EdgeInsets.only(right: 16),
-                                child: RecipeCard(
-                                  recipe: recipe,
-                                  isHorizontal: false,
-                                  onTap: () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => RecipeDetailScreen(recipe: recipe),
-                                    ),
-                                  ),
-                                  onSave: () => recipeProvider.toggleSaveRecipe(recipe),
-                                ).animate().fade(duration: 400.ms, delay: (500 + (index * 50)).ms).slideX(begin: 0.2, end: 0),
-                              );
-                            },
-                          ),
                   ),
                 ),
             
@@ -422,19 +289,19 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         ),
                       ),
                     ),
-                  ).animate().fade(duration: 400.ms, delay: 600.ms).slideX(begin: -0.1, end: 0),
+                  ),
                 ),
             
                 SliverToBoxAdapter(
                   child: SizedBox(
                     height: isMobile ? 280 : 320,
-                    child: _isLoading
+                    child: (_isLoading || recipeProvider.isLoadingMena)
                         ? ListView.builder(
                             scrollDirection: Axis.horizontal,
                             padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
                             itemCount: 3,
                             itemBuilder: (context, index) {
-                              return const RecipeCardSkeleton(isHorizontal: false);
+                              return const RecipeCardSkeleton(isHorizontal: true);
                             },
                           )
                         : ListView.builder(
@@ -456,7 +323,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                     ),
                                   ),
                                   onSave: () => recipeProvider.toggleSaveRecipe(recipe),
-                                ).animate().fade(duration: 400.ms, delay: (600 + (index * 50)).ms).slideX(begin: 0.2, end: 0),
+                                ),
                               );
                             },
                           ),
@@ -472,157 +339,155 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }  
   
-  // Mobile: 2x2 grid of cards
-  Widget _buildMobileQuickActions(RecipeProvider recipeProvider) {
-    return Column(
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: QuickActionCard(
-                icon: Icons.healing_rounded,
-                label: 'Health',
-                subtitle: 'Personalized',
-                color: AppColors.diabetesFriendly,
-                compact: true,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const HealthFiltersScreen(),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: QuickActionCard(
-                icon: Icons.eco_rounded,
-                label: 'Leftovers',
-                subtitle: 'Reduce waste',
-                color: AppColors.accent,
-                compact: true,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const LeftoverScreen(),
-                  ),
-                ),
-              ),
-            ),
-          ],
+  Widget _buildGeminiHeroCard(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.surfaceDark : AppColors.secondary,
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: isDark ? AppColors.elevatedShadow : AppColors.cardShadow,
+        border: Border.all(
+          color: AppColors.primary.withOpacity(0.3),
+          width: 1.0,
         ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: QuickActionCard(
-                icon: Icons.bookmark_rounded,
-                label: 'Saved',
-                subtitle: '${recipeProvider.savedRecipes.length} recipes',
-                color: AppColors.warning,
-                compact: true,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const SavedRecipesScreen(),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  gradient: AppColors.warmGradient,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.primary.withOpacity(0.3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                ),
+                child: const Icon(Icons.auto_awesome, color: Colors.white, size: 24),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Live Gemini Companion',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Your real-time AI sous-chef',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.7),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          Text(
+            'Point your camera at the ingredients in your fridge, and I will guide you step-by-step.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: Colors.white.withOpacity(0.9),
+              height: 1.5,
+              fontSize: 15,
+            ),
+          ),
+          const SizedBox(height: 28),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      PageRouteBuilder(
+                        pageBuilder: (context, animation, secondaryAnimation) => 
+                          VoiceAssistantMode(
+                            onClose: () => Navigator.pop(context),
+                            startWithCamera: true,
+                          ),
+                        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                          return FadeTransition(opacity: animation, child: child);
+                        },
+                        fullscreenDialog: true,
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.camera_alt_rounded, color: AppColors.secondaryDark),
+                  label: const Text(
+                    'Point Camera',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppColors.secondaryDark, fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary, // Premium Gold
+                    foregroundColor: AppColors.secondaryDark, // Dark text
+                    padding: const EdgeInsets.symmetric(vertical: 20),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    elevation: 8,
+                    shadowColor: AppColors.primary.withOpacity(0.4),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: QuickActionCard(
-                icon: Icons.qr_code_scanner_rounded,
-                label: 'Scanner',
-                subtitle: 'Check pantry',
-                color: AppColors.primary,
-                compact: true,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const IngredientScannerScreen(),
+              const SizedBox(width: 16),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      PageRouteBuilder(
+                        pageBuilder: (context, animation, secondaryAnimation) => 
+                          VoiceAssistantMode(
+                            onClose: () => Navigator.pop(context),
+                            startWithCamera: false,
+                          ),
+                        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                          return FadeTransition(opacity: animation, child: child);
+                        },
+                        fullscreenDialog: true,
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.mic_rounded, color: Colors.white),
+                  label: const Text(
+                    'Voice Only',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 20),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: BorderSide(color: Colors.white.withOpacity(0.3)),
+                    ),
+                    elevation: 0,
                   ),
                 ),
               ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  // Desktop: 2 rows of 2 cards
-  Widget _buildDesktopQuickActions(RecipeProvider recipeProvider) {
-    return Column(
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: QuickActionCard(
-                icon: Icons.healing_rounded,
-                label: 'Health Filters',
-                subtitle: 'Personalized meals',
-                color: AppColors.diabetesFriendly,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const HealthFiltersScreen(),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: QuickActionCard(
-                icon: Icons.eco_rounded,
-                label: 'Leftovers',
-                subtitle: 'Reduce waste',
-                color: AppColors.accent,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const LeftoverScreen(),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        Row(
-          children: [
-            Expanded(
-              child: QuickActionCard(
-                icon: Icons.bookmark_rounded,
-                label: 'Saved',
-                subtitle: '${recipeProvider.savedRecipes.length} recipes',
-                color: AppColors.warning,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const SavedRecipesScreen(),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: QuickActionCard(
-                icon: Icons.qr_code_scanner_rounded,
-                label: 'Ingredient Scanner',
-                subtitle: 'Check your pantry',
-                color: AppColors.primary,
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const IngredientScannerScreen(),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

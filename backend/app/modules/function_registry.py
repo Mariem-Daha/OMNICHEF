@@ -67,10 +67,13 @@ async def find_recipe(query: str, db: Session = None) -> Dict[str, Any]:
         ).order_by(desc(Recipe.rating)).limit(6).all()
 
         if not recipes:
+            # Fallback: return popular recipes so the AI always has something to show
+            fallback = db.query(Recipe).order_by(desc(Recipe.rating)).limit(6).all()
             return {
                 "success": True,
-                "message": f"No recipes found for '{query}'.",
-                "recipes": [],
+                "message": f"No exact match for '{query}', but here are some popular alternatives you might love!",
+                "recipes": [_recipe_to_dict(r) for r in fallback],
+                "is_fallback": True,
             }
         return {
             "success": True,
@@ -123,10 +126,13 @@ async def get_recipes_by_category(category: str, db: Session = None) -> Dict[str
         ).order_by(desc(Recipe.rating)).limit(6).all()
 
         if not recipes:
+            # Fallback: return popular recipes so the AI always has something to show
+            fallback = db.query(Recipe).order_by(desc(Recipe.rating)).limit(6).all()
             return {
                 "success": True,
-                "message": f"No recipes found for category '{category}'.",
-                "recipes": [],
+                "message": f"No exact match for category '{category}', but here are some popular recipes you'll enjoy!",
+                "recipes": [_recipe_to_dict(r) for r in fallback],
+                "is_fallback": True,
             }
         return {
             "success": True,
@@ -177,6 +183,40 @@ async def set_timer(minutes) -> Dict[str, Any]:
         }
     except Exception as e:
         logger.error(f"set_timer error: {e}")
+        return {"success": False, "error": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tool 6 – advance_cooking_step
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def advance_cooking_step() -> Dict[str, Any]:
+    """Advance the on-screen cooking guide to the next step."""
+    return {
+        "success": True,
+        "action": "next_step",
+        "message": "Moving to next step.",
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tool 7 – start_step_timer
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def start_step_timer(minutes) -> Dict[str, Any]:
+    """Start the inline countdown timer for the current cooking step."""
+    try:
+        minutes = int(round(float(minutes)))
+        return {
+            "success": True,
+            "message": f"Step timer started for {minutes} minute{'s' if minutes != 1 else ''}.",
+            "timer": {
+                "minutes": minutes,
+                "seconds": minutes * 60,
+            },
+        }
+    except Exception as e:
+        logger.error(f"start_step_timer error: {e}")
         return {"success": False, "error": str(e)}
 
 
@@ -265,7 +305,33 @@ class FunctionRegistry:
                             required=["minutes"],
                         ),
                     ),
-                ]
+                    _t.FunctionDeclaration(
+                        name="advance_cooking_step",
+                        description=(
+                            "Advance the on-screen step-by-step cooking guide to the next step. "
+                            "Call this when the user says 'next', 'next step', 'I\'m ready', "
+                            "'done', 'continue', 'move on', 'go ahead', 'okay I did that', "
+                            "'finished', or anything indicating they have completed the current step. "
+                            "Also call it whenever the user asks if they need to press a button — "
+                            "respond that you\'ll handle it, then call this function."
+                        ),
+                        parameters=_schema("OBJECT"),
+                    ),                    _t.FunctionDeclaration(
+                        name="start_step_timer",
+                        description=(
+                            "Start the on-screen countdown timer for the current cooking step. "
+                            "Call this AFTER you finish narrating a step that includes a cooking duration. "
+                            "CRITICAL: Use the EXACT minutes value stated in the step instruction text \u2014 "
+                            "NOT the duration_minutes field if it contradicts the text, and NEVER default "
+                            "to 6 minutes or any arbitrary value. If the step says '8-10 minutes', "
+                            "use 9 (the midpoint). If unsure, ask the user before starting."
+                        ),
+                        parameters=_schema(
+                            "OBJECT",
+                            props={"minutes": {"type": "INTEGER", "description": "Timer duration in minutes, derived from the step instruction text."}},
+                            required=["minutes"],
+                        ),
+                    ),                ]
             )
         ]
 
@@ -278,4 +344,6 @@ class FunctionRegistry:
             "get_recipes_by_category": lambda **kw: get_recipes_by_category(db=db, **kw),
             "get_recipe_details": lambda **kw: get_recipe_details(db=db, **kw),
             "set_timer": lambda **kw: set_timer(**kw),
+            "advance_cooking_step": lambda **kw: advance_cooking_step(**kw),
+            "start_step_timer": lambda **kw: start_step_timer(**kw),
         }

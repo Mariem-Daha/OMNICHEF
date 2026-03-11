@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter run -d windows)",
+      "Bash(flutter run -d windows --verbose)",
+      "Bash(flutter pub cache repair)",
+      "Bash(grep -v \"^--$\")",
+      "Read(//c/Users/pc/**)",
+      "Bash(flutter sdk-path)",
+      "Read(//d//**)",
+      "Bash(flutter pub deps)",
+      "Bash(cat \"d:/New folder/cuisinee_hack \\(1\\)/cuisinee/frontend/windows/flutter/ephemeral/.plugin_symlinks/flutter_secure_storage_windows/windows/flutter_secure_storage_windows_plugin.cpp\")"
+    ]
+  }
+}

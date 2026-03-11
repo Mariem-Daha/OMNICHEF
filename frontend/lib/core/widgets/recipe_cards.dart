@@ -1,10 +1,10 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'dart:ui';
 import '../theme/app_colors.dart';
 import '../models/recipe_model.dart';
 import '../utils/animations.dart';
 
-class RecipeCard extends StatefulWidget {
+class RecipeCard extends StatelessWidget {
   final Recipe recipe;
   final VoidCallback? onTap;
   final VoidCallback? onSave;
@@ -19,83 +19,37 @@ class RecipeCard extends StatefulWidget {
   });
 
   @override
-  State<RecipeCard> createState() => _RecipeCardState();
-}
-
-class _RecipeCardState extends State<RecipeCard> with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
-  late Animation<double> _elevationAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 200),
-    );
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.03).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
-    );
-    _elevationAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _onHoverChanged(bool isHovered) {
-    if (isHovered) {
-      _controller.forward();
-    } else {
-      _controller.reverse();
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    if (widget.isHorizontal) {
+    if (isHorizontal) {
       return _buildHorizontalCard(context, isDark);
     }
     return _buildVerticalCard(context, isDark);
   }
 
   Widget _buildVerticalCard(BuildContext context, bool isDark) {
-    return MouseRegion(
-      onEnter: (_) => _onHoverChanged(true),
-      onExit: (_) => _onHoverChanged(false),
-      child: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, child) {
-          return Transform.scale(
-            scale: _scaleAnimation.value,
-            child: GestureDetector(
-              onTap: widget.onTap,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: isDark ? AppColors.cardDark : Colors.white,
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(isDark ? 0.3 : 0.08 + _elevationAnimation.value * 0.05),
-                      blurRadius: 20 + _elevationAnimation.value * 10,
-                      offset: Offset(0, 8 + _elevationAnimation.value * 4),
-                      spreadRadius: -4,
-                    ),
-                    BoxShadow(
-                      color: AppColors.primary.withOpacity(0.05 + _elevationAnimation.value * 0.05),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
+    return GestureDetector(
+          onTap: onTap,
+          child: Container(
+            decoration: BoxDecoration(
+              color: isDark ? AppColors.cardDark : Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(isDark ? 0.3 : 0.08),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                  spreadRadius: -4,
                 ),
-                child: Column(
+                BoxShadow(
+                  color: AppColors.primary.withOpacity(0.05),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     // Image Section - Upper half
@@ -107,7 +61,7 @@ class _RecipeCardState extends State<RecipeCard> with SingleTickerProviderStateM
                           ClipRRect(
                             borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
                             child: Image.network(
-                              widget.recipe.imageUrl,
+                              recipe.imageUrl,
                               fit: BoxFit.cover,
                               errorBuilder: (_, __, ___) => Container(
                                 color: isDark ? AppColors.surfaceDark : AppColors.dividerLight,
@@ -145,7 +99,7 @@ class _RecipeCardState extends State<RecipeCard> with SingleTickerProviderStateM
                             left: 12,
                             child: _buildGlassBadge(
                               child: Text(
-                                widget.recipe.cuisine,
+                                recipe.cuisine,
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 11,
@@ -177,7 +131,7 @@ class _RecipeCardState extends State<RecipeCard> with SingleTickerProviderStateM
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  widget.recipe.name,
+                                  recipe.name,
                                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                                     fontWeight: FontWeight.w800,
                                     height: 1.2,
@@ -192,7 +146,7 @@ class _RecipeCardState extends State<RecipeCard> with SingleTickerProviderStateM
                                     Icon(Icons.star_rounded, size: 16, color: AppColors.warning),
                                     const SizedBox(width: 4),
                                     Text(
-                                      widget.recipe.rating.toStringAsFixed(1),
+                                      recipe.rating.toStringAsFixed(1),
                                       style: TextStyle(
                                         fontWeight: FontWeight.w700,
                                         fontSize: 13,
@@ -209,7 +163,7 @@ class _RecipeCardState extends State<RecipeCard> with SingleTickerProviderStateM
                                       ),
                                     ),
                                     Text(
-                                      '${widget.recipe.calories} cal',
+                                      '${recipe.calories} cal',
                                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                         color: isDark ? AppColors.textSecondaryDark : AppColors.textSecondaryLight,
                                         fontWeight: FontWeight.w500,
@@ -239,7 +193,7 @@ class _RecipeCardState extends State<RecipeCard> with SingleTickerProviderStateM
                                       ),
                                       const SizedBox(width: 6),
                                       Text(
-                                        '${widget.recipe.totalTime} min',
+                                        '${recipe.totalTime} min',
                                         style: TextStyle(
                                           fontWeight: FontWeight.w600,
                                           fontSize: 12,
@@ -269,41 +223,29 @@ class _RecipeCardState extends State<RecipeCard> with SingleTickerProviderStateM
                     ),
                   ],
                 ),
-              ),
             ),
-          );
-        },
-      ),
     );
   }
 
   // Refined Horizontal Card (Used in lists if needed)
   Widget _buildHorizontalCard(BuildContext context, bool isDark) {
-    return MouseRegion(
-      onEnter: (_) => _onHoverChanged(true),
-      onExit: (_) => _onHoverChanged(false),
-      child: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, child) {
-          return Transform.scale(
-            scale: _scaleAnimation.value,
-            child: GestureDetector(
-              onTap: widget.onTap,
-              child: Container(
-                width: 300,
-                margin: const EdgeInsets.only(right: 20),
-                decoration: BoxDecoration(
-                  color: isDark ? AppColors.cardDark : Colors.white,
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(isDark ? 0.3 : 0.08), 
-                      blurRadius: 20,
-                      offset: const Offset(0, 8),
-                      spreadRadius: -4,
-                    ),
-                  ],
+    return GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: 300,
+            margin: const EdgeInsets.only(right: 20),
+            decoration: BoxDecoration(
+              color: isDark ? AppColors.cardDark : Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(isDark ? 0.3 : 0.08),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                  spreadRadius: -4,
                 ),
+              ],
+            ),
                 child: Row(
                   children: [
                     Expanded(
@@ -314,7 +256,7 @@ class _RecipeCardState extends State<RecipeCard> with SingleTickerProviderStateM
                           ClipRRect(
                             borderRadius: const BorderRadius.horizontal(left: Radius.circular(24)),
                             child: Image.network(
-                              widget.recipe.imageUrl,
+                              recipe.imageUrl,
                               fit: BoxFit.cover,
                             ),
                           ),
@@ -323,7 +265,7 @@ class _RecipeCardState extends State<RecipeCard> with SingleTickerProviderStateM
                             left: 12,
                             child: _buildGlassBadge(
                               child: Text(
-                                widget.recipe.cuisine,
+                                recipe.cuisine,
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 10,
@@ -351,7 +293,7 @@ class _RecipeCardState extends State<RecipeCard> with SingleTickerProviderStateM
                                     Icon(Icons.star_rounded, size: 16, color: AppColors.warning),
                                     const SizedBox(width: 4),
                                     Text(
-                                      widget.recipe.rating.toStringAsFixed(1),
+                                      recipe.rating.toStringAsFixed(1),
                                       style: TextStyle(
                                         fontWeight: FontWeight.w700,
                                         fontSize: 13,
@@ -365,7 +307,7 @@ class _RecipeCardState extends State<RecipeCard> with SingleTickerProviderStateM
                             ),
                             const SizedBox(height: 12),
                             Text(
-                              widget.recipe.name,
+                              recipe.name,
                               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                                 fontWeight: FontWeight.w800,
                                 height: 1.2,
@@ -375,7 +317,7 @@ class _RecipeCardState extends State<RecipeCard> with SingleTickerProviderStateM
                             ),
                             const SizedBox(height: 8),
                              Text(
-                              '${widget.recipe.calories} cal • ${widget.recipe.totalTime} min',
+                              '${recipe.calories} cal â€¢ ${recipe.totalTime} min',
                               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                 color: isDark ? AppColors.textSecondaryDark : AppColors.textSecondaryLight,
                                 fontWeight: FontWeight.w500,
@@ -387,11 +329,7 @@ class _RecipeCardState extends State<RecipeCard> with SingleTickerProviderStateM
                     ),
                   ],
                 ),
-              ),
             ),
-          );
-        },
-      ),
     );
   }
 
@@ -416,13 +354,13 @@ class _RecipeCardState extends State<RecipeCard> with SingleTickerProviderStateM
   Widget _buildSaveButton(bool isDark, {bool glass = false, double size = 36, double iconSize = 20}) {
     return TapScale(
       child: GestureDetector(
-        onTap: widget.onSave,
+        onTap: onSave,
         child: glass 
           ? _buildGlassBadge(
               child: Icon(
-                widget.recipe.isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+                recipe.isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
                 size: iconSize,
-                color: widget.recipe.isSaved ? AppColors.primary : Colors.white,
+                color: recipe.isSaved ? AppColors.primary : Colors.white,
               ),
             )
           : Container(
@@ -433,9 +371,9 @@ class _RecipeCardState extends State<RecipeCard> with SingleTickerProviderStateM
                 shape: BoxShape.circle,
               ),
               child: Icon(
-                widget.recipe.isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+                recipe.isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
                 size: iconSize,
-                color: widget.recipe.isSaved ? AppColors.primary : AppColors.textTertiaryLight,
+                color: recipe.isSaved ? AppColors.primary : AppColors.textTertiaryLight,
               ),
             ),
       ),
@@ -459,7 +397,7 @@ class DailySuggestionCard extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         child: Container(
-          height: 220,
+          height: 280,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(28),
             boxShadow: [

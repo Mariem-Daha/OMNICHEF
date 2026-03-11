@@ -57,15 +57,18 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     
     // Timer update loop
     _timerUpdateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_activeTimers.isNotEmpty) {
-        setState(() {
-          _activeTimers.removeWhere((timer) {
-            if (timer.remainingSeconds <= 0) {
-              _showTimerCompleteNotification(timer.label);
-              return true;
-            }
-            timer.remainingSeconds--;
-            return false;
+      if (_activeTimers.isNotEmpty && mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((__) {
+          if (!mounted) return;
+          setState(() {
+            _activeTimers.removeWhere((timer) {
+              if (timer.remainingSeconds <= 0) {
+                _showTimerCompleteNotification(timer.label);
+                return true;
+              }
+              timer.remainingSeconds--;
+              return false;
+            });
           });
         });
       }
@@ -310,11 +313,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     // Simulate voice recognition
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted) {
-        setState(() {
-          _isListening = false;
-          _waveformController.stop();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _isListening = false;
+            _waveformController.stop();
+          });
+          _sendMessage("What can I cook with chicken and rice?");
         });
-        _sendMessage("What can I cook with chicken and rice?");
       }
     });
   }

@@ -55,11 +55,17 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen>
       _savedAmplitudeCallback = svc.onAmplitudeChanged;
       _savedStateCallback    = svc.onStateChanged;
       svc.onAmplitudeChanged = (rms) {
-        if (mounted) setState(() { _micAmplitude = rms; _voiceState = svc.state; });
+        if (!mounted) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() { _micAmplitude = rms; _voiceState = svc.state; });
+        });
       };
       // Catches disconnect/connect even when mic is silent
       svc.onStateChanged = (state) {
-        if (mounted) setState(() => _voiceState = state);
+        if (!mounted) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _voiceState = state);
+        });
       };
     }
   }
@@ -84,8 +90,8 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen>
       body: NotificationListener<ScrollNotification>(
         onNotification: (notification) {
           if (notification is ScrollUpdateNotification) {
-            setState(() {
-              _scrollOffset = notification.metrics.pixels;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) setState(() => _scrollOffset = notification.metrics.pixels);
             });
           }
           return false;
@@ -603,6 +609,59 @@ class _RecipeDetailScreenState extends State<RecipeDetailScreen>
                           ),
                         ],
                       ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              TapScale(
+                child: GestureDetector(
+                  onTap: () {
+                    // Navigate to Ask Gemini
+                    Navigator.of(context).push(
+                      PageRouteBuilder(
+                        pageBuilder: (context, animation, secondaryAnimation) => 
+                          VoiceAssistantMode(onClose: () => Navigator.pop(context)),
+                        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                          return FadeTransition(opacity: animation, child: child);
+                        },
+                        fullscreenDialog: true,
+                        opaque: false, // Allow transparency
+                      ),
+                    );
+                  },
+                  child: Container(
+                    height: 56,
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    decoration: BoxDecoration(
+                      gradient: AppColors.primaryGradient,
+                      borderRadius: BorderRadius.circular(28),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.primary.withOpacity(0.4),
+                          blurRadius: 16,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
+                          Icons.auto_awesome,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                         const Text(
+                          'Ask Gemini',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),

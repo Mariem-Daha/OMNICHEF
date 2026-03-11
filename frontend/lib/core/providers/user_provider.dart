@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/user_model.dart';
 import '../services/api_service.dart';
+import '../services/preferences_service.dart';
 
 class UserProvider extends ChangeNotifier {
   final ApiService _api = ApiService();
@@ -16,7 +17,7 @@ class UserProvider extends ChangeNotifier {
   bool get isLoggedIn => _user != null;
   String? get error => _error;
 
-  /// Initialize and try to restore session.
+  /// Initialize and try to restore session, loading local preferences.
   Future<void> init() async {
     _isLoading = true;
     notifyListeners();
@@ -26,11 +27,86 @@ class UserProvider extends ChangeNotifier {
       if (_api.isAuthenticated) {
         _user = await _api.getCurrentUser();
       }
+      // Always load locally saved preferences (device-as-user)
+      await loadLocalPreferences();
     } catch (e) {
       debugPrint('Failed to restore session: $e');
     } finally {
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  /// Load preferences from local storage and create/update the device user.
+  Future<void> loadLocalPreferences() async {
+    try {
+      final savedPrefs = await PreferencesService().loadPreferences();
+      if (savedPrefs == null) return;
+
+      final deviceId = await PreferencesService().getDeviceId();
+
+      // tastePreferences = health goals + favorite ingredients
+      final tastePrefs = [
+        ...savedPrefs.flavorProfile,       // health goals
+        ...savedPrefs.favoriteIngredients, // favorite ingredients
+      ];
+
+      if (_user != null) {
+        _user = _user!.copyWith(
+          healthFilters: savedPrefs.asHealthFilters,
+          tastePreferences: tastePrefs,
+          allergies: savedPrefs.asAllergies,
+          dislikedIngredients: [],
+        );
+      } else {
+        _user = UserModel(
+          id: deviceId,
+          name: 'Chef',
+          email: '$deviceId@local.omnichef',
+          healthFilters: savedPrefs.asHealthFilters,
+          tastePreferences: tastePrefs,
+          allergies: savedPrefs.asAllergies,
+          cookingSkill: 'Intermediate',
+        );
+      }
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Failed to load local preferences: $e');
+    }
+  }
+
+  /// Apply preferences collected in the quiz and persist them.
+  Future<void> applyLocalPreferences(UserPreferences prefs) async {
+    try {
+      final deviceId = await PreferencesService().getDeviceId();
+
+      // tastePreferences = health goals + favorite ingredients
+      final tastePrefs = [
+        ...prefs.flavorProfile,       // health goals
+        ...prefs.favoriteIngredients, // favorite ingredients
+      ];
+
+      if (_user != null) {
+        _user = _user!.copyWith(
+          healthFilters: prefs.asHealthFilters,
+          tastePreferences: tastePrefs,
+          allergies: prefs.asAllergies,
+          dislikedIngredients: [],
+        );
+      } else {
+        _user = UserModel(
+          id: deviceId,
+          name: 'Chef',
+          email: '$deviceId@local.omnichef',
+          healthFilters: prefs.asHealthFilters,
+          tastePreferences: tastePrefs,
+          allergies: prefs.asAllergies,
+          cookingSkill: 'Intermediate',
+        );
+      }
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Failed to apply preferences: $e');
     }
   }
 

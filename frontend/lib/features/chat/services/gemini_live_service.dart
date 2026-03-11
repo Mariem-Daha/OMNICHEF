@@ -76,9 +76,10 @@ class GeminiLiveService {
   bool _vadSpeechDetected = false;       // true once the user starts speaking
   DateTime? _vadLastSpeechTime;          // wall-clock of last loud chunk
   Timer? _vadSilenceTimer;               // fires end_of_turn after silence
-  // RMS energy threshold (0-1 normalised). ~0.008 catches normal speech while
-  // ignoring background hiss.  Adjust downward for quiet microphones.
-  static const double _vadEnergyThreshold = 0.008;
+  // RMS energy threshold (0-1 normalised).
+  // 0.015 is high enough to reject acoustic echo from speakers and
+  // background hiss while still catching conversational speech.
+  static const double _vadEnergyThreshold = 0.015;
   // How long silence must last (after speech detected) before we end the turn.
   // 650ms feels natural — long enough not to cut mid-sentence, fast enough to
   // feel responsive.
@@ -90,7 +91,9 @@ class GeminiLiveService {
   // *quiet* chunks (below current threshold) using a slow EMA (α = 0.02).
   double _adaptiveNoiseFloor = 0.003;
   static const double _noiseFloorAlpha = 0.02;   // EMA smoothing factor
-  static const double _noiseFloorHeadroom = 2.5; // how many × above floor counts as speech
+  // Raised from 2.5 → 4.0: requires signal to be 4× above ambient noise floor.
+  // Prevents speaker echo being mistaken for user speech.
+  static const double _noiseFloorHeadroom = 4.0;
   DateTime? _lastPongTime;
   int _reconnectAttempts = 0;
   static const int maxReconnectAttempts = 3;
@@ -399,7 +402,11 @@ class GeminiLiveService {
           break;
 
       case 'turn_complete':
-        print('✅ Turn complete - playing buffered audio');
+        print('✅ Turn complete - flushing audio buffer in 200ms');
+        // Brief flush delay: allows any in-flight audio chunks that arrived
+        // just before turn_complete to land in the buffer before we play,
+        // preventing mid-sentence cut-offs caused by network reordering.
+        await Future.delayed(const Duration(milliseconds: 200));
         await _playBufferedAudio();
         // State will be set to speaking by _playBufferedAudio.
         // Auto-start mic is triggered in onAudioPlaybackComplete() below.
@@ -517,6 +524,33 @@ class GeminiLiveService {
     if (_channel != null && isConnected) {
       _channel!.sink.add(json.encode(message));
     }
+  }
+
+  /// Send a live camera frame (JPEG, base64-encoded) to the AI session.
+  /// Called every ~2 s while camera mode is active in the voice screen.
+  void sendVideoFrame(String jpegBase64) {
+    _sendMessage({'type': 'video_frame', 'data': jpegBase64});
+  }
+
+  /// Send user health/preference context as the first message so the backend
+  /// can personalise the AI's greeting and subsequent responses.
+  void sendUserContext({
+    List<String> healthFilters = const [],
+    List<String> allergies = const [],
+    List<String> dislikedIngredients = const [],
+    List<String> tastePreferences = const [],
+    String cookingSkill = 'Intermediate',
+    bool greetingDelivered = false,
+  }) {
+    _sendMessage({
+      'type': 'user_context',
+      'health_filters': healthFilters,
+      'allergies': allergies,
+      'disliked_ingredients': dislikedIngredients,
+      'taste_preferences': tastePreferences,
+      'cooking_skill': cookingSkill,
+      'greeting_delivered': greetingDelivered,
+    });
   }
 
   void _handleAudioResponse(Map<String, dynamic> data) async {
@@ -890,18 +924,23 @@ class GeminiLiveService {
 
       // Use a higher RMS threshold than normal VAD to avoid false triggers
       // from acoustic echo (AI's own speaker audio bleeding into the microphone).
-      // 3.5× the effective threshold — low enough for comfortable interruption,
-      // high enough to reject speaker bleed.
+      // 6.0× the effective threshold — requires genuine loud speech to interrupt.
       final bargeInThreshold = math.max(
         _vadEnergyThreshold,
         _adaptiveNoiseFloor * _noiseFloorHeadroom,
-      ) * 3.5;
+      ) * 6.0;
 
-      // Small startup delay: skip the first 400ms of chunks so the initial
+      // Small startup delay: skip the first 600ms of chunks so the initial
       // burst of AI audio (which the mic picks up as echo) is not mis-detected
       // as user speech.
       final monitoringStart = DateTime.now();
-      const startupDelay = Duration(milliseconds: 400);
+      const startupDelay = Duration(milliseconds: 600);
+
+      // Consecutive loud-chunk counter: require 3 chunks above threshold
+      // before triggering barge-in, preventing a single clap/breath/echo
+      // from killing the AI mid-sentence.
+      int consecutiveLoudChunks = 0;
+      const requiredConsecutiveChunks = 3;
 
       _bargeInSubscription = _recorder!.audioChunkStream?.listen((chunk) {
         if (_state != LiveState.speaking || !isConnected) {
@@ -916,11 +955,17 @@ class GeminiLiveService {
         onAmplitudeChanged?.call(rms.clamp(0.0, 1.0));
 
         if (rms > bargeInThreshold) {
-          print('⚡ Auto barge-in: user speech detected during AI speech (RMS: ${rms.toStringAsFixed(3)})');
-          _stopBargeInMonitoring();
-          sendInterrupt().then((_) {
-            if (isConnected) startListening();
-          });
+          consecutiveLoudChunks++;
+          if (consecutiveLoudChunks >= requiredConsecutiveChunks) {
+            print('⚡ Auto barge-in: $consecutiveLoudChunks consecutive loud chunks (RMS: ${rms.toStringAsFixed(3)})');
+            _stopBargeInMonitoring();
+            sendInterrupt().then((_) {
+              if (isConnected) startListening();
+            });
+          }
+        } else {
+          // Reset counter on any quiet chunk — must be continuously loud
+          consecutiveLoudChunks = 0;
         }
       });
     } catch (e) {

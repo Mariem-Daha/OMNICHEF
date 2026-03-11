@@ -24,6 +24,9 @@ class AppTheme {
       brightness: Brightness.light,
       primaryColor: AppColors.primary,
       scaffoldBackgroundColor: AppColors.backgroundLight,
+      splashFactory: NoSplash.splashFactory,
+      hoverColor: Colors.transparent,
+      highlightColor: Colors.transparent,
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.android: ZoomPageTransitionsBuilder(),
@@ -202,6 +205,9 @@ class AppTheme {
       brightness: Brightness.dark,
       primaryColor: AppColors.primary,
       scaffoldBackgroundColor: AppColors.backgroundDark,
+      splashFactory: NoSplash.splashFactory,
+      hoverColor: Colors.transparent,
+      highlightColor: Colors.transparent,
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
           TargetPlatform.android: ZoomPageTransitionsBuilder(),

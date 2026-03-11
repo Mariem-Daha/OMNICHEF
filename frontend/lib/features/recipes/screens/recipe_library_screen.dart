@@ -36,7 +36,7 @@ class _RecipeLibraryScreenState extends State<RecipeLibraryScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     
     // Add scroll listener for infinite scroll (All tab)
     _scrollController.addListener(_onScroll);
@@ -46,14 +46,8 @@ class _RecipeLibraryScreenState extends State<RecipeLibraryScreen>
     // Fetch data for tabs to ensure they are populated
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final provider = context.read<RecipeProvider>();
-      if (provider.mauritanianRecipes.isEmpty) {
-        provider.loadMauritanianRecipes();
-      }
       if (provider.menaRecipes.isEmpty) {
         provider.loadMenaRecipes();
-      }
-      if (provider.globalRecipes.isEmpty) {
-        provider.loadGlobalRecipes();
       }
     });
 
@@ -61,12 +55,8 @@ class _RecipeLibraryScreenState extends State<RecipeLibraryScreen>
     _tabController.addListener(() {
       if (!_tabController.indexIsChanging) {
         final provider = context.read<RecipeProvider>();
-        if (_tabController.index == 1 && provider.mauritanianRecipes.isEmpty) {
-          provider.loadMauritanianRecipes();
-        } else if (_tabController.index == 2 && provider.menaRecipes.isEmpty) {
+        if (_tabController.index == 1 && provider.menaRecipes.isEmpty) {
           provider.loadMenaRecipes();
-        } else if (_tabController.index == 3 && provider.globalRecipes.isEmpty) {
-          provider.loadGlobalRecipes();
         }
       }
     });
@@ -305,7 +295,6 @@ class _RecipeLibraryScreenState extends State<RecipeLibraryScreen>
                                   splashBorderRadius: BorderRadius.circular(12),
                                   tabs: const [
                                     Tab(text: 'All', height: 44),
-                                    Tab(text: 'Mauritanian', height: 44),
                                     Tab(text: 'MENA', height: 44),
                                     Tab(text: '\u{1F30D} Global', height: 44),
                                   ],
@@ -323,9 +312,8 @@ class _RecipeLibraryScreenState extends State<RecipeLibraryScreen>
                 controller: _tabController,
                 children: [
                   _buildRecipeGrid(recipeProvider.recipes),
-                  _buildRecipeGrid(recipeProvider.mauritanianRecipes),
                   _buildRecipeGrid(recipeProvider.menaRecipes),
-                  _buildGlobalTab(recipeProvider, isDark, isMobile, horizontalPadding),
+                  _buildGlobalTab(context, isDark, isMobile, horizontalPadding),
                 ],
               ),
             ),
@@ -552,184 +540,69 @@ class _RecipeLibraryScreenState extends State<RecipeLibraryScreen>
   // ── Global (Spoonacular) tab ──────────────────────────────────────────────
 
   Widget _buildGlobalTab(
-    RecipeProvider provider,
+    BuildContext context,
     bool isDark,
     bool isMobile,
     double horizontalPadding,
   ) {
-    return Column(
-      children: [
-        // Search + cuisine filter row
-        Padding(
-          padding: EdgeInsets.fromLTRB(horizontalPadding, 16, horizontalPadding, 0),
-          child: Column(
-            children: [
-              // Search field
-              TextField(
-                controller: _globalSearchController,
-                onChanged: (v) => setState(() => _globalSearchQuery = v),
-                onSubmitted: (_) => _triggerGlobalSearch(),
-                decoration: InputDecoration(
-                  hintText: 'Search millions of global recipes...',
-                  prefixIcon: const Icon(Icons.search_rounded),
-                  suffixIcon: _globalSearchQuery.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.clear_rounded),
-                          onPressed: () {
-                            _globalSearchController.clear();
-                            setState(() => _globalSearchQuery = '');
-                            provider.loadGlobalRecipes(refresh: true);
-                          },
-                        )
-                      : IconButton(
-                          icon: Icon(Icons.search_rounded, color: AppColors.primary),
-                          onPressed: _triggerGlobalSearch,
-                        ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide.none,
-                  ),
-                  filled: true,
-                  fillColor: isDark ? AppColors.cardDark : Colors.white,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                ),
-              ),
-              const SizedBox(height: 12),
-              // Cuisine filter chips
-              SizedBox(
-                height: 36,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: _globalCuisines.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemBuilder: (context, i) {
-                    final c = _globalCuisines[i];
-                    final label = c.isEmpty ? 'All cuisines' : c;
-                    final selected = _selectedGlobalCuisine == c;
-                    return FilterChip(
-                      label: Text(label, style: const TextStyle(fontSize: 12)),
-                      selected: selected,
-                      onSelected: (_) {
-                        setState(() => _selectedGlobalCuisine = c);
-                        _triggerGlobalSearch();
-                      },
-                      backgroundColor: isDark ? AppColors.cardDark : Colors.white,
-                      selectedColor: AppColors.primary,
-                      labelStyle: TextStyle(
-                        color: selected ? Colors.white : null,
-                        fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                      ),
-                      checkmarkColor: Colors.white,
-                      side: BorderSide(
-                        color: selected ? AppColors.primary : Colors.grey.withOpacity(0.3),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      visualDensity: VisualDensity.compact,
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 8),
-              // Results count
-              if (provider.globalTotalResults > 0)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '${provider.globalTotalResults.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},')} results',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: isDark ? AppColors.textSecondaryDark : AppColors.textSecondaryLight,
-                    ),
-                  ),
-                ),
-            ],
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.public_rounded,
+            size: 80,
+            color: AppColors.primary.withOpacity(0.5),
           ),
-        ),
-
-        // Recipe list
-        Expanded(
-          child: provider.isLoadingGlobal && provider.globalRecipes.isEmpty
-              ? const Center(child: CircularProgressIndicator())
-              : provider.globalRecipes.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.public_off_rounded, size: 64, color: AppColors.primary.withOpacity(0.4)),
-                          const SizedBox(height: 16),
-                          const Text('No global recipes found', style: TextStyle(fontWeight: FontWeight.w700)),
-                          const SizedBox(height: 8),
-                          TextButton(
-                            onPressed: () => provider.loadGlobalRecipes(refresh: true),
-                            child: const Text('Refresh'),
-                          ),
-                        ],
-                      ),
-                    )
-                  : isMobile
-                      ? ListView.builder(
-                          controller: _globalScrollController,
-                          padding: EdgeInsets.fromLTRB(horizontalPadding, 12, horizontalPadding, 130),
-                          itemCount: provider.globalRecipes.length + 1,
-                          itemBuilder: (context, index) {
-                            if (index >= provider.globalRecipes.length) {
-                              return provider.isLoadingGlobal
-                                  ? const Padding(
-                                      padding: EdgeInsets.symmetric(vertical: 24),
-                                      child: Center(child: CircularProgressIndicator()),
-                                    )
-                                  : const SizedBox(height: 16);
-                            }
-                            final recipe = provider.globalRecipes[index];
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 16),
-                              child: SizedBox(
-                                height: 280,
-                                child: RecipeCard(
-                                  recipe: recipe,
-                                  onTap: () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => RecipeDetailScreen(recipe: recipe),
-                                    ),
-                                  ),
-                                  onSave: () => provider.toggleSaveRecipe(recipe),
-                                ),
-                              ),
-                            );
-                          },
-                        )
-                      : GridView.builder(
-                          controller: _globalScrollController,
-                          padding: EdgeInsets.fromLTRB(horizontalPadding, 12, horizontalPadding, 130),
-                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 3,
-                            childAspectRatio: 0.85,
-                            crossAxisSpacing: 20,
-                            mainAxisSpacing: 20,
-                          ),
-                          itemCount: provider.globalRecipes.length + (provider.isLoadingGlobal ? 3 : 0),
-                          itemBuilder: (context, index) {
-                            if (index >= provider.globalRecipes.length) {
-                              return index == provider.globalRecipes.length
-                                  ? const Center(child: CircularProgressIndicator())
-                                  : const SizedBox();
-                            }
-                            final recipe = provider.globalRecipes[index];
-                            return RecipeCard(
-                              recipe: recipe,
-                              onTap: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => RecipeDetailScreen(recipe: recipe),
-                                ),
-                              ),
-                              onSave: () => provider.toggleSaveRecipe(recipe),
-                            );
-                          },
-                        ),
-        ),
-      ],
+          const SizedBox(height: 24),
+          Text(
+            'Global Recipes Coming Soon',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: isDark ? Colors.white : AppColors.textPrimaryLight,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'We are currently integrating with Spoonacular\nto bring you millions of global recipes.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+              color: isDark ? AppColors.textSecondaryDark : AppColors.textSecondaryLight,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 32),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            decoration: BoxDecoration(
+              gradient: AppColors.primaryGradient,
+              borderRadius: BorderRadius.circular(30),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primary.withOpacity(0.3),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.auto_awesome, color: Colors.white, size: 20),
+                SizedBox(width: 8),
+                Text(
+                  'Stay Tuned!',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

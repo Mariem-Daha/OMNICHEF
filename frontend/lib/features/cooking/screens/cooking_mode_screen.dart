@@ -92,12 +92,16 @@ class _CookingModeScreenState extends State<CookingModeScreen>
       _isTimerRunning = true;
     });
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (_timerSeconds > 0) {
-        setState(() => _timerSeconds--);
-      } else {
-        _stopTimer();
-        _showTimerAlert();
-      }
+      if (!mounted) { timer.cancel(); return; }
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (_timerSeconds > 0) {
+          setState(() => _timerSeconds--);
+        } else {
+          _stopTimer();
+          _showTimerAlert();
+        }
+      });
     });
   }
 
@@ -243,17 +247,20 @@ class _CookingModeScreenState extends State<CookingModeScreen>
       // Simulate voice recognition
       Future.delayed(const Duration(seconds: 3), () {
         if (mounted && _isListening) {
-          setState(() => _isListening = false);
-          // Simulated voice command
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('🎤 Heard: "Next step"'),
-              backgroundColor: AppColors.accent,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-          );
-          _nextStep();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || !_isListening) return;
+            setState(() => _isListening = false);
+            // Simulated voice command
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text('🎤 Heard: "Next step"'),
+                backgroundColor: AppColors.accent,
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            );
+            _nextStep();
+          });
         }
       });
     }

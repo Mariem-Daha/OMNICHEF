@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/recipe_model.dart';
 import '../services/api_service.dart';
-
+import '../data/dummy_recipes.dart';
 class RecipeProvider extends ChangeNotifier {
   final ApiService _api = ApiService();
   
@@ -38,6 +38,7 @@ class RecipeProvider extends ChangeNotifier {
   List<String> get selectedHealthFilters => _selectedHealthFilters;
   List<String> get leftoverIngredients => _leftoverIngredients;
   bool get isLoading => _isLoading || _isLoadingMauritanian || _isLoadingMena;
+  bool get isLoadingMena => _isLoadingMena;
   bool get isLoadingMore => _isLoadingMore;
   bool get isLoadingGlobal => _isLoadingGlobal;
   int get globalTotalResults => _globalTotalResults;
@@ -130,8 +131,40 @@ class RecipeProvider extends ChangeNotifier {
   }
 
   Recipe? get dailySuggestion {
-    if (_recipes.isEmpty) return null;
-    return _recipes.first;
+    return Recipe(
+      id: 'daily_perfect_dish',
+      name: 'Wagyu Beef Medallions',
+      description: 'Melt-in-your-mouth Wagyu beef medallions seared to perfection, served with a rich red wine reduction and truffle mash.',
+      imageUrl: 'https://images.unsplash.com/photo-1600891964092-4316c288032e?w=1200&q=100', // Premium Steak Photo
+      cuisine: 'French',
+      prepTime: 45,
+      cookTime: 90,
+      servings: 4,
+      calories: 850,
+      tags: ['Premium', 'High Protein', 'Glazed', 'Mouth-watering'],
+      ingredients: [
+        '1 premium lamb crown roast (about 2 lbs)',
+        '2 tbsp Ras el Hanout (Moroccan spice blend)',
+        '3 tbsp extra virgin olive oil',
+        '1/2 cup pomegranate molasses',
+        'Fresh mint and cilantro for garnish'
+      ],
+      steps: [
+        RecipeStep(stepNumber: 1, instruction: 'Preheat oven to 375°F. Rub the roast with olive oil and spices.', durationMinutes: 10),
+        RecipeStep(stepNumber: 2, instruction: 'Roast for 60 minutes, brushing with pomegranate molasses every 20 minutes.', durationMinutes: 60),
+        RecipeStep(stepNumber: 3, instruction: 'Rest for 15 minutes before carving.', durationMinutes: 15),
+      ],
+      nutrition: NutritionInfo(
+        calories: 850,
+        protein: 45.0,
+        carbs: 12.0,
+        fat: 65.0,
+        fiber: 2.0,
+        sodium: 450.0,
+        sugar: 8.0,
+      ),
+      difficulty: 'Hard',
+    );
   }
 
   /// Load Mauritanian recipes from API.
@@ -153,7 +186,8 @@ class RecipeProvider extends ChangeNotifier {
     _isLoadingMena = true;
     notifyListeners();
     try {
-      _menaRecipes = await _api.getRecipesByCuisine('MENA');
+      final results = await _api.getRecipesByCuisine('MENA');
+      _menaRecipes = results.where((r) => r.cuisine.toLowerCase() != 'mauritania' && r.cuisine.toLowerCase() != 'mauritanian').toList();
     } catch (e) {
       debugPrint('Failed to load MENA recipes: $e');
     } finally {
@@ -248,7 +282,8 @@ class RecipeProvider extends ChangeNotifier {
     if (_leftoverIngredients.isEmpty) return _recipes;
     
     try {
-      return await _api.getRecipesByLeftovers(_leftoverIngredients);
+      final results = await _api.getRecipesByLeftovers(_leftoverIngredients);
+      return results.where((r) => r.cuisine.toLowerCase() != 'mauritania' && r.cuisine.toLowerCase() != 'mauritanian').toList();
     } catch (e) {
       debugPrint('Failed to get recipes by leftovers: $e');
       return getRecipesByLeftovers();
@@ -272,7 +307,8 @@ class RecipeProvider extends ChangeNotifier {
     if (query.isEmpty) return _recipes;
     
     try {
-      return await _api.searchRecipes(query);
+      final results = await _api.searchRecipes(query);
+      return results.where((r) => r.cuisine.toLowerCase() != 'mauritania' && r.cuisine.toLowerCase() != 'mauritanian').toList();
     } catch (e) {
       debugPrint('Search failed: $e');
       // Fallback to local search
@@ -288,7 +324,8 @@ class RecipeProvider extends ChangeNotifier {
     if (_selectedHealthFilters.isEmpty) return _recipes;
     
     try {
-      return await _api.getRecipesByTags(_selectedHealthFilters);
+      final results = await _api.getRecipesByTags(_selectedHealthFilters);
+      return results.where((r) => r.cuisine.toLowerCase() != 'mauritania' && r.cuisine.toLowerCase() != 'mauritanian').toList();
     } catch (e) {
       debugPrint('Failed to filter by tags: $e');
       return getFilteredRecipes();

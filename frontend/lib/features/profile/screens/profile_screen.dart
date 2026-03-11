@@ -157,7 +157,7 @@ class ProfileScreen extends StatelessWidget {
                           ),
                           // Edit button
                           GestureDetector(
-                            onTap: () {},
+                            onTap: () => _showEditProfileSheet(context),
                             child: Container(
                               width: 44,
                               height: 44,
@@ -622,6 +622,16 @@ class ProfileScreen extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  static void _showEditProfileSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const _EditProfileSheet(),
     );
   }
 }
@@ -1201,4 +1211,282 @@ class _HealthQuizModalState extends State<_HealthQuizModal> {
       ),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────
+// Edit Profile Bottom Sheet
+// ─────────────────────────────────────────────────────
+
+class _EditProfileSheet extends StatefulWidget {
+  const _EditProfileSheet();
+  @override
+  State<_EditProfileSheet> createState() => _EditProfileSheetState();
+}
+
+class _EditProfileSheetState extends State<_EditProfileSheet> {
+  static const _healthOptions = [
+    'Diabetes-Friendly', 'Heart-Healthy', 'Low-Sodium', 'High-Fiber',
+    'Gluten-Free', 'Dairy-Free', 'High Protein', 'Low Carb', 'Quick & Easy',
+  ];
+  static const _allergyOptions = [
+    'Peanuts', 'Tree Nuts', 'Milk', 'Eggs', 'Wheat', 'Soy', 'Fish', 'Shellfish',
+  ];
+  static const _tasteOptions = [
+    'Spicy', 'Sweet', 'Sour', 'Salty', 'Savory', 'Mild', 'Smoky', 'Herby',
+  ];
+  static const _skillOptions = ['Beginner', 'Intermediate', 'Advanced'];
+
+  late List<String> _health;
+  late List<String> _allergies;
+  late List<String> _taste;
+  late String _skill;
+  late List<String> _disliked;
+  final TextEditingController _dislikedCtrl = TextEditingController();
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final user = context.read<UserProvider>().user;
+    _health    = List<String>.from(user?.healthFilters ?? []);
+    _allergies = List<String>.from(user?.allergies ?? []);
+    _taste     = List<String>.from(user?.tastePreferences ?? []);
+    _skill     = user?.cookingSkill ?? 'Intermediate';
+    _disliked  = List<String>.from(user?.dislikedIngredients ?? []);
+  }
+
+  @override
+  void dispose() {
+    _dislikedCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    try {
+      await context.read<UserProvider>().updateProfile({
+        'health_filters': _health,
+        'allergies': _allergies,
+        'taste_preferences': _taste,
+        'cooking_skill': _skill,
+        'disliked_ingredients': _disliked,
+      });
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Row(children: [
+              Icon(Icons.check_circle_rounded, color: Colors.white),
+              SizedBox(width: 10),
+              Text('Profile updated!'),
+            ]),
+            backgroundColor: AppColors.accent,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: const Text('Failed to save. Try again.'),
+              backgroundColor: AppColors.error),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.surfaceDark : Colors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Handle
+          Container(
+            margin: const EdgeInsets.only(top: 12),
+            width: 40, height: 4,
+            decoration: BoxDecoration(
+              color: isDark ? Colors.white24 : Colors.black12,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          // Title bar
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 16, 16, 0),
+            child: Row(
+              children: [
+                Text('Edit Profile',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                const Spacer(),
+                TextButton(
+                  onPressed: _saving ? null : _save,
+                  child: _saving
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                      : Text('Save', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          ),
+          const Divider(),
+          // Scrollable content
+          Flexible(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Cooking Skill
+                  _sectionLabel('Cooking Skill'),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8, runSpacing: 8,
+                    children: _skillOptions.map((s) {
+                      final sel = _skill == s;
+                      return ChoiceChip(
+                        label: Text(s),
+                        selected: sel,
+                        onSelected: (_) => setState(() => _skill = s),
+                        selectedColor: AppColors.primary,
+                        labelStyle: TextStyle(
+                          color: sel ? Colors.white : null,
+                          fontWeight: sel ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Health Filters
+                  _sectionLabel('Health Goals'),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8, runSpacing: 8,
+                    children: _healthOptions.map((h) {
+                      final sel = _health.contains(h);
+                      return FilterChip(
+                        label: Text(h),
+                        selected: sel,
+                        onSelected: (v) => setState(() => v ? _health.add(h) : _health.remove(h)),
+                        selectedColor: AppColors.primary.withOpacity(0.15),
+                        checkmarkColor: AppColors.primary,
+                        labelStyle: TextStyle(
+                          color: sel ? AppColors.primary : null,
+                          fontWeight: sel ? FontWeight.w600 : FontWeight.normal,
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Allergies
+                  _sectionLabel('Allergies'),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8, runSpacing: 8,
+                    children: _allergyOptions.map((a) {
+                      final sel = _allergies.contains(a);
+                      return FilterChip(
+                        label: Text(a),
+                        selected: sel,
+                        onSelected: (v) => setState(() => v ? _allergies.add(a) : _allergies.remove(a)),
+                        selectedColor: AppColors.error.withOpacity(0.15),
+                        checkmarkColor: AppColors.error,
+                        labelStyle: TextStyle(
+                          color: sel ? AppColors.error : null,
+                          fontWeight: sel ? FontWeight.w600 : FontWeight.normal,
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Taste Preferences
+                  _sectionLabel('Taste Preferences'),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8, runSpacing: 8,
+                    children: _tasteOptions.map((t) {
+                      final sel = _taste.contains(t);
+                      return FilterChip(
+                        label: Text(t),
+                        selected: sel,
+                        onSelected: (v) => setState(() => v ? _taste.add(t) : _taste.remove(t)),
+                        selectedColor: AppColors.warning.withOpacity(0.15),
+                        checkmarkColor: AppColors.warning,
+                        labelStyle: TextStyle(
+                          color: sel ? AppColors.warning : null,
+                          fontWeight: sel ? FontWeight.w600 : FontWeight.normal,
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Disliked Ingredients
+                  _sectionLabel('Disliked Ingredients'),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8, runSpacing: 8,
+                    children: [
+                      ..._disliked.map((d) => Chip(
+                        label: Text(d),
+                        deleteIcon: const Icon(Icons.close, size: 16),
+                        onDeleted: () => setState(() => _disliked.remove(d)),
+                      )),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _dislikedCtrl,
+                          decoration: InputDecoration(
+                            hintText: 'Add ingredient…',
+                            isDense: true,
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          ),
+                          onSubmitted: (v) {
+                            final val = v.trim();
+                            if (val.isNotEmpty && !_disliked.contains(val)) {
+                              setState(() { _disliked.add(val); _dislikedCtrl.clear(); });
+                            }
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: const Icon(Icons.add_circle_rounded),
+                        color: AppColors.primary,
+                        onPressed: () {
+                          final val = _dislikedCtrl.text.trim();
+                          if (val.isNotEmpty && !_disliked.contains(val)) {
+                            setState(() { _disliked.add(val); _dislikedCtrl.clear(); });
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionLabel(String text) => Text(
+    text,
+    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 0.3),
+  );
 }

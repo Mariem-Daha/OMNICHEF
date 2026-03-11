@@ -108,14 +108,16 @@ class _AIReactionBarState extends State<AIReactionBar>
   void _rotateSuggestions() {
     if (!mounted) return;
     _controller.reverse().then((_) {
-      if (mounted) {
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
         setState(() {
           _currentSuggestionSet =
               (_currentSuggestionSet + 1) % _suggestionSets.length;
         });
         _controller.forward();
         Future.delayed(const Duration(seconds: 10), _rotateSuggestions);
-      }
+      });
     });
   }
 
@@ -181,12 +183,16 @@ class _AIReactionBarState extends State<AIReactionBar>
                       GestureDetector(
                         onTap: () {
                           _controller.reverse().then((_) {
-                            setState(() {
-                              _currentSuggestionSet =
-                                  (_currentSuggestionSet + 1) %
-                                      _suggestionSets.length;
+                            if (!mounted) return;
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (!mounted) return;
+                              setState(() {
+                                _currentSuggestionSet =
+                                    (_currentSuggestionSet + 1) %
+                                        _suggestionSets.length;
+                              });
+                              _controller.forward();
                             });
-                            _controller.forward();
                           });
                         },
                         child: Icon(

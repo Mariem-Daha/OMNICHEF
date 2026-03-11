@@ -24,6 +24,12 @@ class HealthTag extends StatefulWidget {
 class _HealthTagState extends State<HealthTag> {
   bool _isPressed = false;
 
+  void _setPressed(bool value) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _isPressed = value);
+    });
+  }
+
   Color get tagColor {
     if (widget.color != null) return widget.color!;
     
@@ -83,12 +89,12 @@ class _HealthTagState extends State<HealthTag> {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapDown: (_) => _setPressed(true),
       onTapUp: (_) {
-        setState(() => _isPressed = false);
+        _setPressed(false);
         widget.onTap?.call();
       },
-      onTapCancel: () => setState(() => _isPressed = false),
+      onTapCancel: () => _setPressed(false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         transform: Matrix4.identity()..scale(_isPressed ? 0.95 : 1.0),
@@ -168,17 +174,23 @@ class CustomFilterChip extends StatefulWidget {
 class _CustomFilterChipState extends State<CustomFilterChip> {
   bool _isPressed = false;
 
+  void _setPressed(bool value) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _isPressed = value);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    
+
     return GestureDetector(
-      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapDown: (_) => _setPressed(true),
       onTapUp: (_) {
-        setState(() => _isPressed = false);
+        _setPressed(false);
         widget.onTap?.call();
       },
-      onTapCancel: () => setState(() => _isPressed = false),
+      onTapCancel: () => _setPressed(false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         transform: Matrix4.identity()..scale(_isPressed ? 0.96 : 1.0),
@@ -270,17 +282,23 @@ class IngredientChip extends StatefulWidget {
 class _IngredientChipState extends State<IngredientChip> {
   bool _isPressed = false;
 
+  void _setPressed(bool value) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _isPressed = value);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    
+
     return GestureDetector(
-      onTapDown: widget.showRemove ? (_) => setState(() => _isPressed = true) : null,
+      onTapDown: widget.showRemove ? (_) => _setPressed(true) : null,
       onTapUp: widget.showRemove ? (_) {
-        setState(() => _isPressed = false);
+        _setPressed(false);
         widget.onRemove?.call();
       } : null,
-      onTapCancel: widget.showRemove ? () => setState(() => _isPressed = false) : null,
+      onTapCancel: widget.showRemove ? () => _setPressed(false) : null,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
         transform: Matrix4.identity()..scale(_isPressed ? 0.95 : 1.0),
@@ -364,17 +382,23 @@ class CategoryChip extends StatefulWidget {
 class _CategoryChipState extends State<CategoryChip> {
   bool _isPressed = false;
 
+  void _setPressed(bool value) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _isPressed = value);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    
+
     return GestureDetector(
-      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapDown: (_) => _setPressed(true),
       onTapUp: (_) {
-        setState(() => _isPressed = false);
+        _setPressed(false);
         widget.onTap?.call();
       },
-      onTapCancel: () => setState(() => _isPressed = false),
+      onTapCancel: () => _setPressed(false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         transform: Matrix4.identity()..scale(_isPressed ? 0.96 : 1.0),

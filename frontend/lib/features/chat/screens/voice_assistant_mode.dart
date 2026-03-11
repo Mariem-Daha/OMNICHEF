@@ -1,21 +1,29 @@
 ﻿
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:math' as math;
 import 'dart:ui';
 import 'dart:convert';
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:camera/camera.dart';
+import 'package:provider/provider.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/providers/user_provider.dart';
 import '../../../core/widgets/ai_wave_overlay.dart';
 import '../services/gemini_live_service.dart';
+import '../../vision/screens/ingredient_scanner_screen.dart';
+import '../../vision/screens/dish_identifier_screen.dart';
 
 class VoiceAssistantMode extends StatefulWidget {
   final VoidCallback onClose;
+  final bool startWithCamera;
 
   const VoiceAssistantMode({
     super.key,
     required this.onClose,
+    this.startWithCamera = false,
   });
 
   @override
@@ -31,6 +39,9 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
 
   // Audio player for UI thread playback
   AudioPlayer? _uiAudioPlayer;
+  // Separate player for short UI earcons (entry/exit chimes) so it never
+  // conflicts with the main speech-audio pipeline.
+  AudioPlayer? _earconPlayer;
   // Completer that resolves when audio playback finishes OR is cancelled by barge-in.
   // Using a Completer lets stop() unblock the waiting future (onPlayerComplete.first
   // never fires on stop, which caused the service to get stuck after barge-in).
@@ -54,11 +65,21 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
   // True when _activeContent was set by a function call (timer / recipe).
   // Prevents incoming transcripts from overwriting it.
   bool _functionContentActive = false;
+  // True when a GuidedCookingView is the active content (suppresses greeting text).
+  bool _isCookingMode = false;
 
   // GlobalKey to the active guided cooking session.
   // Lets the parent inject AI-issued timers straight into the current step.
   final GlobalKey<_GuidedCookingViewState> _cookingViewKey = GlobalKey();
-  
+
+  // ── Camera / video mode ─────────────────────────────────────────────────
+  bool _cameraOn = false;
+  CameraController? _cameraController;
+  Timer? _frameTimer;
+  bool _isSendingFrame = false;
+  /// Periodic timer for automatic vision probing (step validation / ingredient ID).
+  Timer? _visionProbeTimer;
+
   @override
   void initState() {
     super.initState();
@@ -80,117 +101,173 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
 
     // Initialize UI audio player
     _uiAudioPlayer = AudioPlayer();
+    // Initialize earcon player and play entry chime immediately
+    _earconPlayer = AudioPlayer();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _earconPlayer?.play(AssetSource('audio/chime_open.wav')).catchError((_) {});
+    });
 
     _initGeminiLive();
+    
+    // Auto-start camera if requested by the hackathon home screen
+    if (widget.startWithCamera) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _startCamera();
+      });
+    }
   }
 
   void _initGeminiLive() async {
-    // Setup callbacks
-    _geminiService.onStateChanged = (state) {
+    // ── INSTANT LOCAL GREETING ─────────────────────────────────────────────
+    // Show a hardcoded greeting the millisecond the screen loads — zero latency.
+    // The WebSocket connects quietly in the background while the greeting is
+    // already visible. No 10-second silence on stage.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       setState(() {
-         switch (state) {
-            case LiveState.connecting: 
-              _aiState = "Connecting..."; 
-              _isConnecting = true;
-              break;
-            case LiveState.connected: 
-              _aiState = "Ready"; 
-              _isConnecting = false;
-              break;
-            case LiveState.listening: 
-              _aiState = "Listening..."; 
-              _isConnecting = false;
-              break;
-            case LiveState.processing: 
-              _aiState = "Thinking..."; 
-              _isConnecting = false;
-              break;
-            case LiveState.speaking: 
-              _aiState = "Speaking..."; 
-              _isSpeaking = true;
-              _isConnecting = false;
-              break;
-            case LiveState.error: 
-              _aiState = "Error"; 
-              _isConnecting = false;
-              break;
-            default: 
-              _aiState = "Disconnected";
-              _isConnecting = false;
-         }
-         
-         if (state != LiveState.speaking) {
-           _isSpeaking = false;
-           // Unblock the playback-wait Completer BEFORE stopping the player so
-           // that onAudioPlaybackComplete() is always called (stop() alone never
-           // fires onPlayerComplete, which previously left the service stuck).
-           if (_audioCompleter != null && !_audioCompleter!.isCompleted) {
-             _audioCompleter!.complete();
-           }
-           _uiAudioPlayer?.stop();
-         }
+        _isConnecting = false;
+        _aiState = "Ready";
+        _currentResponseText =
+            "Welcome back, Chef! I'm Cuisinée — your AI kitchen companion. "
+            "Ask me for a recipe, say 'what can I make with chicken', or just tell me what you're craving!";
+        _activeContent = _buildTextResponse(_currentResponseText);
       });
+    });
+    // ─────────────────────────────────────────────────────────────────────
 
-      // Adjust ring rotation speed to match state energy
+    // Setup callbacks
+    _geminiService.onStateChanged = (state) {
+      // Non-UI side-effects that don't need a frame boundary
+      if (state != LiveState.speaking) {
+        if (_audioCompleter != null && !_audioCompleter!.isCompleted) {
+          _audioCompleter!.complete();
+        }
+        _uiAudioPlayer?.stop();
+      }
       _updateRingSpeed(state);
+
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+           switch (state) {
+              case LiveState.connecting:
+                _aiState = "Connecting...";
+                _isConnecting = true;
+                break;
+              case LiveState.connected:
+                _aiState = "Ready";
+                _isConnecting = false;
+                break;
+              case LiveState.listening:
+                _aiState = "Listening...";
+                _isConnecting = false;
+                break;
+              case LiveState.processing:
+                _aiState = "Thinking...";
+                _isConnecting = false;
+                break;
+              case LiveState.speaking:
+                _aiState = "Speaking...";
+                _isSpeaking = true;
+                _isConnecting = false;
+                break;
+              case LiveState.error:
+                _aiState = "Error";
+                _isConnecting = false;
+                break;
+              default:
+                _aiState = "Disconnected";
+                _isConnecting = false;
+           }
+
+           if (state != LiveState.speaking) {
+             _isSpeaking = false;
+           }
+        });
+      });
     };
 
     _geminiService.onTranscriptReceived = (text) {
        if (!mounted) return;
-       setState(() {
-          if (_geminiService.state == LiveState.speaking) {
-             _currentResponseText += text;
-          } else {
-             _currentResponseText = text;
-          }
-          // Show AI text response when no function widget is active
-          if (!_functionContentActive) {
-            _activeContent = _buildTextResponse(_currentResponseText);
-          }
+       WidgetsBinding.instance.addPostFrameCallback((_) {
+         if (!mounted) return;
+         setState(() {
+            if (_geminiService.state == LiveState.speaking) {
+               _currentResponseText += text;
+            } else {
+               _currentResponseText = text;
+            }
+            // Show AI text response when no function widget is active
+            if (!_functionContentActive) {
+              _activeContent = _buildTextResponse(_currentResponseText);
+            }
+         });
        });
     };
 
     _geminiService.onFunctionExecuted = (name, result) {
        if (!mounted) return;
-       setState(() {
-          print("Function executed: $name, Result: $result");
-          
-          if (name == 'find_recipe' ||
-              name == 'get_popular_recipes' ||
-              name == 'get_recipes_by_category') {
-             final recipes = result['recipes'] as List?;
-             if (recipes != null && recipes.isNotEmpty) {
-                _activeContent = _GuidedCookingView(
-                  key: _cookingViewKey,
-                  recipes: recipes.cast<Map<String, dynamic>>(),
-                );
-                _functionContentActive = true;
-             } else {
-                _activeContent = _buildTextResponse("No recipes found.");
-                _functionContentActive = false;
-             }
-          } else if (name == 'get_recipe_details') {
-             final recipeData = result['recipe'] as Map<String, dynamic>?;
-             if (recipeData != null) {
-                _activeContent = _GuidedCookingView(
-                  key: _cookingViewKey,
-                  recipes: [recipeData],
-                );
-                _functionContentActive = true;
-             }
-          } else if (name == 'set_timer') {
-             final timerData = result['timer'] as Map<String, dynamic>?;
-             final minutes = ((timerData?['minutes'] as num?) ?? 1).toInt();
-             // If a guided cooking session is on screen, inject into the active step.
-             // Otherwise show a standalone countdown timer.
-             if (_cookingViewKey.currentState != null) {
-               _cookingViewKey.currentState!.startTimerForCurrentStep(minutes);
-             } else {
-               _activeContent = _buildTimerCard(minutes);
-               _functionContentActive = true;
-             }
-          }
+       WidgetsBinding.instance.addPostFrameCallback((_) {
+         if (!mounted) return;
+         setState(() {
+            print("Function executed: $name, Result: $result");
+
+            if (name == 'find_recipe' ||
+                name == 'get_popular_recipes' ||
+                name == 'get_recipes_by_category') {
+               final recipes = result['recipes'] as List?;
+               if (recipes != null && recipes.isNotEmpty) {
+                  _activeContent = _GuidedCookingView(
+                    key: _cookingViewKey,
+                    recipes: recipes.cast<Map<String, dynamic>>(),
+                  );
+                  _functionContentActive = true;
+                  _isCookingMode = true;
+                  if (_cameraOn) _startVisionProbing();
+               } else {
+                  // No results: clear content and let the AI voice handle it gracefully
+                  _activeContent = null;
+                  _functionContentActive = false;
+                  _isCookingMode = false;
+               }
+            } else if (name == 'advance_cooking_step') {
+               // AI-driven step advancement — move the on-screen guide forward
+               _cookingViewKey.currentState?.nextStep();
+            } else if (name == 'get_recipe_details') {
+               final recipeData = result['recipe'] as Map<String, dynamic>?;
+               if (recipeData != null) {
+                  _activeContent = _GuidedCookingView(
+                    key: _cookingViewKey,
+                    recipes: [recipeData],
+                  );
+                  _functionContentActive = true;
+                  _isCookingMode = true;
+                  if (_cameraOn) _startVisionProbing();
+               }
+            } else if (name == 'set_timer') {
+               final timerData = result['timer'] as Map<String, dynamic>?;
+               final minutes = ((timerData?['minutes'] as num?) ?? 1).toInt();
+               // If a guided cooking session is on screen, inject into the active step.
+               // Otherwise show a standalone countdown timer.
+               if (_cookingViewKey.currentState != null) {
+                 _cookingViewKey.currentState!.startTimerForCurrentStep(minutes);
+               } else {
+                 _activeContent = _buildTimerCard(minutes);
+                 _functionContentActive = true;
+               }
+            } else if (name == 'start_step_timer') {
+               // Voice-activated step timer — targets the active step card exclusively
+               final timerData = result['timer'] as Map<String, dynamic>?;
+               final minutes = ((timerData?['minutes'] as num?) ?? 1).toInt();
+               if (_cookingViewKey.currentState != null) {
+                 _cookingViewKey.currentState!.startTimerForCurrentStep(minutes);
+               } else {
+                 _activeContent = _buildTimerCard(minutes);
+                 _functionContentActive = true;
+               }
+            }
+         });
        });
     };
     
@@ -273,12 +350,32 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
     // Connect real-time mic amplitude â†’ wave visualizer
     _geminiService.onAmplitudeChanged = (rms) {
       if (!mounted) return;
-      setState(() => _micAmplitude = rms);
+      // Use addPostFrameCallback to avoid setState during pointer/device update phase
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _micAmplitude = rms);
+      });
     };
 
-    // Connect
-    // Use production backend WebSocket
+    // Connect — in the background while greeting is already showing
     await _geminiService.connect("ws://localhost:8000/api/voice/ws");
+
+    // Send user context with greetingDelivered:true so the backend does NOT
+    // trigger an AI greeting — the local hardcoded one already played.
+    if (mounted) {
+      final user = context.read<UserProvider>().user;
+      if (user != null) {
+        _geminiService.sendUserContext(
+          healthFilters: user.healthFilters,
+          allergies: user.allergies,
+          dislikedIngredients: user.dislikedIngredients,
+          tastePreferences: user.tastePreferences,
+          cookingSkill: user.cookingSkill,
+          greetingDelivered: true,
+        );
+      } else {
+        _geminiService.sendUserContext(greetingDelivered: true);
+      }
+    }
   }
   
   void _toggleListening() async {
@@ -297,8 +394,9 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
         _isSpeaking = false;
         _aiState = "Listening...";
         _currentResponseText = "";
-        _activeContent = null;
-        _functionContentActive = false;
+        // Deliberately do NOT wipe _activeContent or _functionContentActive.
+        // Clearing them here caused the context wipe bug: AI would forget the
+        // active recipe and say "what would you like to make?" after any barge-in.
       });
       final started = await _geminiService.startListening();
       if (!started) {
@@ -384,19 +482,154 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
     setState(() {
       _currentResponseText = "";
       _activeContent = null;
+      _isCookingMode = false;
       _aiState = "Thinking...";
     });
     _geminiService.sendText(text);
   }
 
+  // ── Camera / video mode helpers ──────────────────────────────────────────
+
+  Future<void> _startCamera() async {
+    // On web the camera plugin delegates to camera_web (getUserMedia).
+    // On unsupported platforms we show a friendly message.
+    try {
+      final cameras = await availableCameras();
+      if (cameras.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No camera found on this device.'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      }
+      // Prefer back camera for cooking use
+      final cam = cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.back,
+        orElse: () => cameras.first,
+      );
+      final ctrl = CameraController(
+        cam,
+        ResolutionPreset.low,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+      await ctrl.initialize();
+      if (!mounted) return;
+      setState(() {
+        _cameraController = ctrl;
+        _cameraOn = true;
+      });
+      _startFrameTimer();
+      _startVisionProbing();
+    } catch (e) {
+      debugPrint('Camera start error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not start camera: $e'),
+            backgroundColor: Colors.red.shade800,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  void _startFrameTimer() {
+    _frameTimer?.cancel();
+    _frameTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => _captureAndSendFrame(),
+    );
+  }
+
+  Future<void> _captureAndSendFrame() async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) return;
+    if (_isSendingFrame) return;
+    _isSendingFrame = true;
+    try {
+      final file = await _cameraController!.takePicture();
+      final bytes = await file.readAsBytes();
+      _geminiService.sendVideoFrame(base64Encode(bytes));
+    } catch (e) {
+      debugPrint('Frame capture error: $e');
+    } finally {
+      _isSendingFrame = false;
+    }
+  }
+
+  Future<void> _stopCamera() async {
+    _frameTimer?.cancel();
+    _frameTimer = null;
+    _visionProbeTimer?.cancel();
+    _visionProbeTimer = null;
+    await _cameraController?.dispose();
+    if (mounted) setState(() { _cameraController = null; _cameraOn = false; });
+  }
+
+  // ── Automatic vision probing ──────────────────────────────────────────────
+
+  /// Fires an immediate context-aware vision probe, then schedules periodic
+  /// step-validation probes while in cooking mode.
+  void _startVisionProbing() {
+    _visionProbeTimer?.cancel();
+    _visionProbeTimer = null;
+    _sendVisionProbe(); // Fire immediately on camera open
+    if (_isCookingMode) {
+      _visionProbeTimer = Timer.periodic(
+        const Duration(seconds: 12),
+        (_) => _sendVisionProbe(),
+      );
+    }
+  }
+
+  /// Sends one context-aware vision probe to the AI.
+  /// In cooking mode: checks whether the current step is visually complete.
+  /// Otherwise: identifies visible ingredients and suggests a recipe.
+  Future<void> _sendVisionProbe() async {
+    if (!_cameraOn || _cameraController == null || !_cameraController!.value.isInitialized) return;
+    if (_isCookingMode) {
+      final stepText = _cookingViewKey.currentState?.getCurrentStepText();
+      if (stepText == null || stepText.isEmpty) return;
+      _geminiService.sendText(
+        "VISION WATCH: Current step is '$stepText'. "
+        "Look at the camera and tell me if this step is done.",
+      );
+    } else {
+      _geminiService.sendText(
+        "FRIDGE FORAGE: I'm pointing the camera at my counter right now. "
+        "Identify every ingredient you can see and suggest the best recipe we can make.",
+      );
+    }
+    await Future.delayed(const Duration(milliseconds: 300));
+    await _captureAndSendFrame();
+  }
+
   @override
   void dispose() {
+    _frameTimer?.cancel();
+    _visionProbeTimer?.cancel();
+    _cameraController?.dispose();
     _geminiService.disconnect();
     _uiAudioPlayer?.dispose();
+    _earconPlayer?.dispose();
     _breathingController.dispose();
     _rotationController.dispose();
     _waveController.dispose();
     super.dispose();
+  }
+
+  /// Plays the exit chime then calls widget.onClose.
+  Future<void> _closeWithChime() async {
+    try {
+      await _earconPlayer?.play(AssetSource('audio/chime_close.wav'));
+      await Future.delayed(const Duration(milliseconds: 850));
+    } catch (_) {}
+    if (mounted) widget.onClose();
   }
 
   @override
@@ -406,32 +639,39 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Background ambient glow
-          Positioned(
-            right: -100, top: -100,
-            child: Container(
-              width: 500, height: 500,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: AppColors.primary.withOpacity(0.1),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.primary.withOpacity(0.1),
-                    blurRadius: 100,
-                    spreadRadius: 50,
-                  ),
-                ],
+          // Background: camera feed (video mode) or dark ambient glow (audio mode)
+          if (_cameraOn && _cameraController != null && _cameraController!.value.isInitialized)
+            Positioned.fill(
+              child: CameraPreview(_cameraController!),
+            )
+          else ...[
+            // Background ambient glow
+            Positioned(
+              right: -100, top: -100,
+              child: Container(
+                width: 500, height: 500,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppColors.primary.withOpacity(0.1),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.primary.withOpacity(0.1),
+                      blurRadius: 100,
+                      spreadRadius: 50,
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-          // Siri wave overlay
-          Positioned.fill(
-            child: AiWaveOverlay(
-              waveController: _waveController,
-              micAmplitude: _micAmplitude,
-              voiceState: _geminiService.state,
+            // Siri wave overlay
+            Positioned.fill(
+              child: AiWaveOverlay(
+                waveController: _waveController,
+                micAmplitude: _micAmplitude,
+                voiceState: _geminiService.state,
+              ),
             ),
-          ),
+          ],
           SafeArea(
             child: Column(
               children: [
@@ -481,12 +721,36 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
                           ],
                         ),
                       ),
-                      IconButton(
-                        onPressed: widget.onClose,
-                        icon: const Icon(Icons.close, color: Colors.white),
-                        style: IconButton.styleFrom(
-                          backgroundColor: Colors.white.withOpacity(0.1),
-                        ),
+                      // Right-side action buttons
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_cameraOn) ...[
+                            // Stop camera
+                            IconButton(
+                              tooltip: 'Stop Video',
+                              onPressed: _stopCamera,
+                              icon: const Icon(Icons.videocam_off_rounded, color: Colors.white, size: 20),
+                              style: IconButton.styleFrom(backgroundColor: Colors.red.withOpacity(0.55)),
+                            ),
+                            const SizedBox(width: 6),
+                          ] else ...[
+                            // Start camera
+                            IconButton(
+                              tooltip: 'Switch to Video Mode',
+                              onPressed: _startCamera,
+                              icon: const Icon(Icons.videocam_rounded, color: Colors.white, size: 20),
+                              style: IconButton.styleFrom(backgroundColor: Colors.white.withOpacity(0.12)),
+                            ),
+                            const SizedBox(width: 6),
+                          ],
+                          // Close
+                          IconButton(
+                            onPressed: _closeWithChime,
+                            icon: const Icon(Icons.close, color: Colors.white),
+                            style: IconButton.styleFrom(backgroundColor: Colors.white.withOpacity(0.1)),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -497,15 +761,19 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
                       ? Row(
                           children: [
                             Expanded(flex: 3, child: _buildLeftContentArea()),
-                            Expanded(flex: 2, child: _buildRightAvatarArea()),
+                            if (!_cameraOn)
+                              Expanded(flex: 2, child: _buildRightAvatarArea()),
                           ],
                         )
-                      : Column(
-                          children: [
-                            Expanded(flex: 4, child: _buildRightAvatarArea()),
-                            Expanded(flex: 6, child: _buildLeftContentArea()),
-                          ],
-                        ),
+                      : _cameraOn
+                          // Video mode: content fills the full height (orb hidden)
+                          ? _buildLeftContentArea()
+                          : Column(
+                              children: [
+                                Expanded(flex: 4, child: _buildRightAvatarArea()),
+                                Expanded(flex: 6, child: _buildLeftContentArea()),
+                              ],
+                            ),
                 ),
               ],
             ),
@@ -517,7 +785,9 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
 
   Widget _buildLeftContentArea() {
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: _isCookingMode
+          ? const EdgeInsets.fromLTRB(0, 12, 0, 0)
+          : const EdgeInsets.all(24),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -525,10 +795,12 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
           Expanded(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 500),
-              child: _activeContent ?? _buildIdleSuggestionList(),
+              // When camera is on with no active content, show nothing so the
+              // live feed is fully visible — the AI will respond naturally.
+              child: _activeContent ?? (_cameraOn ? const SizedBox.shrink() : _buildIdleSuggestionList()),
             ),
           ),
-          if (_functionContentActive && _currentResponseText.isNotEmpty)
+          if (!_isCookingMode && _functionContentActive && _currentResponseText.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 12),
               child: Text(
@@ -572,9 +844,8 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
   }
 
   Widget _buildVoiceCommandChip(String label) {
-    return InkWell(
+    return GestureDetector(
       onTap: () => _sendTextRequest(label),
-      borderRadius: BorderRadius.circular(16),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -683,7 +954,7 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
                         ],
                       ),
                       child: Image.asset(
-                        'assets/images/logo.png',
+                        'assets/images/gemini_logo.png',
                         fit: BoxFit.contain,
                       ),
                     );
@@ -852,6 +1123,12 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
   int _stepIdx = 0;
   bool _guidedMode = true; // auto Cook mode — no hands needed
 
+  // Slide direction for step transitions: +1 = forward (right-in), -1 = backward (left-in)
+  int _stepDirection = 1;
+
+  // Earcon player for timer tick/done sounds
+  final AudioPlayer _earconPlayer = AudioPlayer();
+
   // Per-step timers: stepIndex → controller
   final Map<int, _StepTimerController> _timers = {};
   // Ingredient check-off — auto-updated as steps advance
@@ -871,6 +1148,13 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
   }
 
   @override
+  void dispose() {
+    for (final t in _timers.values) t.cancel();
+    _earconPlayer.dispose();
+    super.dispose();
+  }
+
+  @override
   void didUpdateWidget(_GuidedCookingView old) {
     super.didUpdateWidget(old);
     if (old.recipes != widget.recipes) {
@@ -885,7 +1169,7 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
   }
 
   /// Called whenever the active step changes. Auto-checks proportional
-  /// ingredients and kicks off the step timer automatically.
+  /// ingredients relative to cooking progress.
   void _onStepChanged(int step) {
     if (!mounted) return;
     setState(() => _stepIdx = step);
@@ -899,22 +1183,8 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
         _checked.add(i);
       }
     }
-
-    // Auto-start the timer for this step (if the step has a duration)
-    _startStepTimer();
-  }
-
-  void _startStepTimer() {
-    if (!mounted) return;
-    final steps = _steps;
-    if (steps.isEmpty || _stepIdx >= steps.length) return;
-
-    final step = steps[_stepIdx];
-    final raw = step is Map ? (step['duration'] ?? step['timer_minutes'] ?? 0) : 0;
-    final minutes = (raw is num ? raw.toInt() : int.tryParse(raw.toString()) ?? 0);
-    if (minutes <= 0) return;
-
-    _launchTimer(minutes);
+    // Timer is voice-activated — Gemini calls start_step_timer(minutes)
+    // after narrating each step. No auto-start here.
   }
 
   void _launchTimer(int minutes) {
@@ -924,8 +1194,19 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
     final ctrl = _StepTimerController(minutes * 60);
     _timers[_stepIdx] = ctrl;
     ctrl.start(() {
-      if (mounted) setState(() {});
-      if (ctrl.isDone) _tryAutoAdvance();
+      if (mounted) {
+        // Play soft tick for each second in the last 10 seconds
+        if (ctrl.remaining > 0 && ctrl.remaining <= 10) {
+          _earconPlayer.play(AssetSource('audio/timer_tick.wav')).catchError((_) {});
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() {});
+        });
+      }
+      if (ctrl.isDone) {
+        _earconPlayer.play(AssetSource('audio/timer_done.wav')).catchError((_) {});
+        _tryAutoAdvance();
+      }
     });
     if (mounted) setState(() {});
   }
@@ -936,8 +1217,19 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
     final ctrl = _StepTimerController(totalSecs);
     _timers[stepIdx] = ctrl;
     ctrl.start(() {
-      if (mounted) setState(() {});
-      if (ctrl.isDone) _tryAutoAdvance();
+      if (mounted) {
+        // Play soft tick for each second in the last 10 seconds
+        if (ctrl.remaining > 0 && ctrl.remaining <= 10) {
+          _earconPlayer.play(AssetSource('audio/timer_tick.wav')).catchError((_) {});
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() {});
+        });
+      }
+      if (ctrl.isDone) {
+        _earconPlayer.play(AssetSource('audio/timer_done.wav')).catchError((_) {});
+        _tryAutoAdvance();
+      }
     });
     if (mounted) setState(() {});
   }
@@ -961,6 +1253,24 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
   /// Called by the parent's GlobalKey when AI issues a set_timer function call.
   void startTimerForCurrentStep(int minutes) => _launchTimer(minutes);
 
+  /// Called by the parent when AI issues an advance_cooking_step function call.
+  void nextStep() {
+    if (!mounted) return;
+    if (_stepIdx < _steps.length - 1) {
+      _stepDirection = 1;
+      setState(() => _stepIdx++);
+      _onStepChanged(_stepIdx);
+    }
+  }
+
+  /// Returns the current step's instruction text for Vision Watch probes.
+  String? getCurrentStepText() {
+    if (_steps.isEmpty || _stepIdx >= _steps.length) return null;
+    final step = _steps[_stepIdx];
+    if (step is Map) return (step['instruction'] ?? step['text'] ?? '').toString();
+    return step.toString();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -970,9 +1280,15 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
         if (widget.recipes.length > 1) ...[
           SizedBox(
             height: 36,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: ShaderMask(
+              shaderCallback: (bounds) => const LinearGradient(
+                colors: [Colors.transparent, Colors.white, Colors.white, Colors.transparent],
+                stops: [0.0, 0.06, 0.94, 1.0],
+              ).createShader(bounds),
+              blendMode: BlendMode.dstIn,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
               itemCount: widget.recipes.length,
               itemBuilder: (_, i) {
                 final sel = i == _recipeIdx;
@@ -1006,29 +1322,72 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
                 );
               },
             ),
+            ),
           ),
           const SizedBox(height: 8),
         ],
 
-        // Mode toggle tabs
-        Row(
-          children: [
-            _modeTab('ðŸ“‹ Recipe', !_guidedMode,
-                () => setState(() => _guidedMode = false)),
-            const SizedBox(width: 8),
-            _modeTab('ðŸ³ Cook', _guidedMode,
-                () { setState(() { _guidedMode = true; _stepIdx = 0; }); _onStepChanged(0); }),
-          ],
-        ),
-        const SizedBox(height: 10),
-
         Expanded(
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 300),
-            child: _guidedMode
-                ? _buildGuidedView(key: const ValueKey('guided'))
-                : _buildBrowseView(key: const ValueKey('browse')),
-          ),
+          child: Builder(builder: (ctx) {
+            final heroUrl = _guidedMode
+                ? (_recipe['image_url'] ?? _recipe['imageUrl'] ?? '').toString()
+                : '';
+            return Stack(
+              children: [
+                // Fallback dark gradient — shows when image unavailable/loading
+                Positioned.fill(
+                  child: Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF0F1F18), Color(0xFF090F0C)],
+                      ),
+                    ),
+                  ),
+                ),
+                if (heroUrl.isNotEmpty) ...[
+                  Positioned.fill(
+                    child: ClipRect(
+                      child: ImageFiltered(
+                        imageFilter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+                        child: Image.network(
+                          heroUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Positioned.fill(
+                    child: Container(color: Colors.black.withOpacity(0.60)),
+                  ),
+                ],
+                // Folder tabs — anchored flush to top of the card
+                Positioned(
+                  top: 0, left: 12, right: 0,
+                  child: Row(
+                    children: [
+                      _modeTab('Recipe', !_guidedMode,
+                          () => setState(() => _guidedMode = false)),
+                      const SizedBox(width: 6),
+                      _modeTab('Cook', _guidedMode,
+                          () { setState(() { _guidedMode = true; _stepIdx = 0; }); _onStepChanged(0); }),
+                    ],
+                  ),
+                ),
+                Positioned.fill(
+                  top: 36,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 300),
+                    child: _guidedMode
+                        ? _buildGuidedView(key: const ValueKey('guided'))
+                        : _buildBrowseView(key: const ValueKey('browse')),
+                  ),
+                ),
+              ],
+            );
+          }),
         ),
       ],
     );
@@ -1238,18 +1597,15 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(vertical: 13),
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                        colors: [AppColors.secondary, Color(0xFF0D5C40)]),
+                    color: AppColors.primary,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('ðŸ³', style: TextStyle(fontSize: 17)),
+                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      Icon(Icons.outdoor_grill_rounded, size: 18, color: Colors.black),
                       SizedBox(width: 8),
                       Text('Start Cooking',
                           style: TextStyle(
-                              color: Colors.white,
+                              color: Colors.black,
                               fontSize: 14,
                               fontWeight: FontWeight.bold,
                               letterSpacing: 0.5)),
@@ -1282,35 +1638,42 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
       key: key,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Progress bar
-        Row(children: [
-          Text('Step ${_stepIdx + 1} / $total',
-              style: const TextStyle(
-                  color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-          const SizedBox(width: 10),
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(2),
-              child: LinearProgressIndicator(
-                value: (_stepIdx + 1) / total,
-                backgroundColor: Colors.white.withOpacity(0.1),
-                valueColor: const AlwaysStoppedAnimation(AppColors.primary),
-                minHeight: 4,
-              ),
-            ),
-          ),
-        ]),
-        const SizedBox(height: 10),
-
-        // Active step card (with inline timer)
+        // Active step card — wrapped in AnimatedSwitcher for directional slide
         Expanded(
-          child: _ActiveStepCard(
-            stepIdx: _stepIdx,
-            instruction: instr.toString(),
-            recipeDuration: recipeDur,
-            timer: timer,
-            onStartTimer: (secs) => _attachTimerSeconds(_stepIdx, secs),
-            onCancelTimer: () => _removeTimer(_stepIdx),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 380),
+            transitionBuilder: (child, animation) {
+              // Determine slide direction: incoming vs outgoing child
+              final isIncoming = child.key == ValueKey(_stepIdx);
+              final begin = isIncoming
+                  ? Offset(_stepDirection.toDouble(), 0.0)
+                  : Offset(-_stepDirection.toDouble(), 0.0);
+              return SlideTransition(
+                position: Tween<Offset>(begin: begin, end: Offset.zero)
+                    .animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
+                child: FadeTransition(
+                  opacity: CurvedAnimation(parent: animation, curve: Curves.easeIn),
+                  child: child,
+                ),
+              );
+            },
+            layoutBuilder: (currentChild, previousChildren) => Stack(
+              alignment: Alignment.center,
+              children: [
+                ...previousChildren,
+                if (currentChild != null) currentChild,
+              ],
+            ),
+            child: _ActiveStepCard(
+              key: ValueKey(_stepIdx),
+              stepIdx: _stepIdx,
+              totalSteps: total,
+              instruction: instr.toString(),
+              recipeDuration: recipeDur,
+              timer: timer,
+              onStartTimer: (secs) => _attachTimerSeconds(_stepIdx, secs),
+              onCancelTimer: () => _removeTimer(_stepIdx),
+            ),
           ),
         ),
 
@@ -1326,6 +1689,7 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
               enabled: _stepIdx > 0,
               filled: false,
               onTap: () {
+                _stepDirection = -1;
                 setState(() => _stepIdx--);
                 _onStepChanged(_stepIdx);
               },
@@ -1342,6 +1706,7 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
                     enabled: true,
                     filled: true,
                     onTap: () {
+                      _stepDirection = 1;
                       setState(() => _stepIdx++);
                       _onStepChanged(_stepIdx);
                     },
@@ -1354,10 +1719,8 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
                         color: Colors.green.shade800,
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text('ðŸŽ‰', style: TextStyle(fontSize: 16)),
+                      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                          Text('🎉', style: TextStyle(fontSize: 16)),
                           SizedBox(width: 6),
                           Text('All Done!',
                               style: TextStyle(
@@ -1393,15 +1756,11 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 11),
         decoration: BoxDecoration(
-          gradient: filled && enabled
-              ? const LinearGradient(
-                  colors: [AppColors.secondary, Color(0xFF0D5C40)])
-              : null,
-          color: !filled
-              ? (enabled
+          color: filled && enabled
+              ? AppColors.primary
+              : (!filled && enabled
                   ? Colors.white.withOpacity(0.07)
-                  : Colors.transparent)
-              : null,
+                  : Colors.transparent),
           borderRadius: BorderRadius.circular(12),
           border: !filled
               ? Border.all(
@@ -1417,13 +1776,13 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
               Icon(icon,
                   size: 12,
                   color: enabled
-                      ? Colors.white
+                      ? (filled ? Colors.black : Colors.white)
                       : Colors.white.withOpacity(0.2)),
             if (iconFirst) const SizedBox(width: 4),
             Text(label,
                 style: TextStyle(
                   color: enabled
-                      ? Colors.white
+                      ? (filled ? Colors.black : Colors.white)
                       : Colors.white.withOpacity(0.2),
                   fontSize: 13,
                   fontWeight: filled ? FontWeight.bold : FontWeight.normal,
@@ -1433,7 +1792,7 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
               Icon(icon,
                   size: 12,
                   color: enabled
-                      ? Colors.white
+                      ? (filled ? Colors.black : Colors.white)
                       : Colors.white.withOpacity(0.2)),
           ],
         ),
@@ -1537,6 +1896,7 @@ class _GuidedCookingViewState extends State<_GuidedCookingView> {
 
 class _ActiveStepCard extends StatelessWidget {
   final int stepIdx;
+  final int totalSteps;
   final String instruction;
   final int recipeDuration;        // minutes from recipe data (0 = no built-in timer)
   final _StepTimerController? timer;
@@ -1544,7 +1904,9 @@ class _ActiveStepCard extends StatelessWidget {
   final VoidCallback onCancelTimer;
 
   const _ActiveStepCard({
+    super.key,
     required this.stepIdx,
+    required this.totalSteps,
     required this.instruction,
     required this.recipeDuration,
     required this.timer,
@@ -1554,151 +1916,255 @@ class _ActiveStepCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F1F18),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-            color: AppColors.primary.withOpacity(0.45), width: 1.5),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primary.withOpacity(0.10),
-            blurRadius: 22,
-            spreadRadius: 3,
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header row: step badge + built-in duration hint
-          Row(children: [
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                  color: AppColors.primary,
-                  borderRadius: BorderRadius.circular(8)),
-              child: Text(
-                'STEP ${stepIdx + 1}',
-                style: const TextStyle(
-                    color: Colors.black,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.1),
-              ),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.16),
+              width: 1.5,
             ),
-            if (recipeDuration > 0 && timer == null) ...[
-              const Spacer(),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.07),
-                    borderRadius: BorderRadius.circular(8)),
-                child: Text('â± ${recipeDuration}m',
-                    style: TextStyle(
-                        color: Colors.white.withOpacity(0.65),
-                        fontSize: 11)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.25),
+                blurRadius: 36,
+                spreadRadius: 6,
               ),
             ],
-          ]),
-
-          const SizedBox(height: 12),
-
-          // Instruction (scrollable)
-          Expanded(
-            child: SingleChildScrollView(
-              child: Text(instruction,
-                  style: const TextStyle(
-                      color: Colors.white, fontSize: 15, height: 1.65)),
-            ),
           ),
-
-          const SizedBox(height: 12),
-
-          // Timer section
-          _buildTimerSection(),
-        ],
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Thin progress bar — flush with top edge of card
+              LinearProgressIndicator(
+                value: totalSteps > 0 ? (stepIdx + 1) / totalSteps : 0.0,
+                backgroundColor: Colors.white.withOpacity(0.08),
+                valueColor: const AlwaysStoppedAnimation(AppColors.primary),
+                minHeight: 3,
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(22, 16, 22, 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [AppColors.secondary, Color(0xFF0D5C40)],
+                              ),
+                              borderRadius: BorderRadius.circular(30),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppColors.secondary.withOpacity(0.55),
+                                  blurRadius: 18,
+                                  spreadRadius: 2,
+                                ),
+                              ],
+                            ),
+                            child: Text(
+                              'STEP ${stepIdx + 1}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 3.0,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            '${stepIdx + 1} / $totalSteps',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.40),
+                              fontSize: 12,
+                            ),
+                          ),
+                          if (recipeDuration > 0 && timer == null) ...[
+                            const Spacer(),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.08),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: Colors.white.withOpacity(0.12)),
+                              ),
+                              child: Text(
+                                '\u23F1 ${recipeDuration}m',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.60),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 18),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          child: _buildBulletInstructions(instruction),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      _buildTimerSection(),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 
+  /// Splits a cooking instruction into scannable bullet-point sentences.
+  Widget _buildBulletInstructions(String text) {
+    final rawParts = text.trim().split(RegExp(r'\.\s+(?=[A-Z0-9“‘”\u0022])'));
+    final parts = rawParts.map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+    if (parts.length <= 1) {
+      return Text(text,
+          style: const TextStyle(color: Colors.white, fontSize: 22, height: 1.75));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: parts.map((s) {
+        final sentence =
+            (s.endsWith('.') || s.endsWith('!') || s.endsWith('?')) ? s : '$s.';
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 9.0),
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: AppColors.primary,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  sentence,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    height: 1.75,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+
   Widget _buildTimerSection() {
-    // Timer auto-starts when step is entered  nothing to show if not yet started
+    // Timer is voice-activated (start_step_timer tool) — not shown until triggered
     if (timer == null) return const SizedBox.shrink();
     final t = timer!;
     final mins = t.remaining ~/ 60;
     final secs = t.remaining % 60;
     final display =
         '${mins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
+    final ringColor = t.isDone ? Colors.greenAccent : AppColors.primary;
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: t.isDone
-            ? Colors.green.shade900.withOpacity(0.6)
-            : Colors.black.withOpacity(0.35),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: t.isDone
-              ? Colors.greenAccent.withOpacity(0.6)
-              : AppColors.primary,
-        ),
-      ),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 42,
-            height: 42,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                CircularProgressIndicator(
-                  value: t.progress,
-                  strokeWidth: 3,
-                  backgroundColor: Colors.white.withOpacity(0.08),
+    // Compact circular ring — sits inline at the bottom of the card.
+    // Looks like an Apple Watch ring, not a web-form box.
+    return Row(
+      children: [
+        SizedBox(
+          width: 72,
+          height: 72,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // Background track
+              SizedBox(
+                width: 72, height: 72,
+                child: CircularProgressIndicator(
+                  value: 1.0,
+                  strokeWidth: 5,
                   valueColor: AlwaysStoppedAnimation(
-                      t.isDone ? Colors.greenAccent : AppColors.primary),
+                      Colors.white.withOpacity(0.07)),
                 ),
-                Icon(
-                  t.isDone ? Icons.check_circle : Icons.timer,
-                  color: t.isDone ? Colors.greenAccent : AppColors.primary,
-                  size: 16,
+              ),
+              // Progress arc
+              SizedBox(
+                width: 72, height: 72,
+                child: CircularProgressIndicator(
+                  value: t.isDone ? 1.0 : (1.0 - t.progress),
+                  strokeWidth: 5,
+                  strokeCap: StrokeCap.round,
+                  backgroundColor: Colors.transparent,
+                  valueColor: AlwaysStoppedAnimation(ringColor),
                 ),
-              ],
-            ),
+              ),
+              // Centre label
+              t.isDone
+                  ? Icon(Icons.check_rounded, color: Colors.greenAccent, size: 22)
+                  : Text(
+                      display,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+            ],
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  t.isDone ? "Time's up!" : display,
-                  style: TextStyle(
-                    color: t.isDone ? Colors.greenAccent : Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                  ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                t.isDone ? "Time's up!" : 'Timer running',
+                style: TextStyle(
+                  color: ringColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
                 ),
-                Text(
-                  t.isDone ? 'Check your dish!' : 'remaining',
-                  style: TextStyle(
-                      color: Colors.white.withOpacity(0.4), fontSize: 11),
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                t.isDone ? 'Check your dish!' : 'Tap × to cancel',
+                style: TextStyle(
+                    color: Colors.white.withOpacity(0.35), fontSize: 11),
+              ),
+            ],
           ),
-          GestureDetector(
-            onTap: onCancelTimer,
+        ),
+        GestureDetector(
+          onTap: onCancelTimer,
+          child: Container(
+            width: 28, height: 28,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.07),
+              shape: BoxShape.circle,
+            ),
             child: Icon(Icons.close,
-                color: Colors.white.withOpacity(0.35), size: 18),
+                color: Colors.white.withOpacity(0.45), size: 14),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -1763,13 +2229,16 @@ class _CountdownTimerWidgetState extends State<_CountdownTimerWidget> {
     _remaining = widget.totalSeconds;
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
-      setState(() {
-        if (_remaining > 0) {
-          _remaining--;
-        } else {
-          _done = true;
-          _timer?.cancel();
-        }
+      WidgetsBinding.instance.addPostFrameCallback((__) {
+        if (!mounted) return;
+        setState(() {
+          if (_remaining > 0) {
+            _remaining--;
+          } else {
+            _done = true;
+            _timer?.cancel();
+          }
+        });
       });
     });
   }
@@ -1854,3 +2323,4 @@ class _CountdownTimerWidgetState extends State<_CountdownTimerWidget> {
     );
   }
 }
+

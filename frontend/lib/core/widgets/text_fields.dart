@@ -155,7 +155,11 @@ class _SearchTextFieldState extends State<SearchTextField> {
         ],
       ),
       child: Focus(
-        onFocusChange: (focused) => setState(() => _isFocused = focused),
+        onFocusChange: (focused) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _isFocused = focused);
+          });
+        },
         child: TextField(
           controller: widget.controller,
           onChanged: widget.onChanged,

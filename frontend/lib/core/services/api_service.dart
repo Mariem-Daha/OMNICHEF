@@ -1,6 +1,7 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/recipe_model.dart';
 import '../models/user_model.dart';
 
@@ -13,7 +14,6 @@ class ApiService {
     defaultValue: 'http://localhost:8000/api',
   );
 
-  static const _storage = FlutterSecureStorage();
   static const _tokenKey = 'auth_token';
 
   String? _token;
@@ -25,7 +25,8 @@ class ApiService {
   
   /// Initialize service and load stored token.
   Future<void> init() async {
-    _token = await _storage.read(key: _tokenKey);
+    final prefs = await SharedPreferences.getInstance();
+    _token = prefs.getString(_tokenKey);
   }
   
   /// Get authorization headers.
@@ -116,7 +117,8 @@ class ApiService {
   /// Logout and clear stored token.
   Future<void> logout() async {
     _token = null;
-    await _storage.delete(key: _tokenKey);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_tokenKey);
   }
   
   /// Check if user is authenticated.
@@ -124,7 +126,8 @@ class ApiService {
   
   Future<void> _saveToken(String token) async {
     _token = token;
-    await _storage.write(key: _tokenKey, value: token);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_tokenKey, token);
   }
 
   // ============ RECIPES ============
@@ -364,6 +367,47 @@ class ApiService {
       return false;
     }
   }
+
+  // ============ VISION AI ============
+
+  /// Scan an image to identify ingredients and find matching recipes.
+  Future<IngredientScanResult> scanIngredients(
+    Uint8List imageBytes, {
+    String mimeType = 'image/jpeg',
+  }) async {
+    final b64 = base64Encode(imageBytes);
+    final response = await http.post(
+      Uri.parse('$_baseUrl/vision/scan-ingredients'),
+      headers: _headers,
+      body: jsonEncode({'image_b64': b64, 'mime_type': mimeType}),
+    );
+    final data = _handleResponse(response);
+    return IngredientScanResult.fromJson(data);
+  }
+
+  /// Identify a cooked dish from an image and find the matching recipe.
+  Future<DishIdentifyResult> identifyDish(
+    Uint8List imageBytes, {
+    String mimeType = 'image/jpeg',
+  }) async {
+    final b64 = base64Encode(imageBytes);
+    final response = await http.post(
+      Uri.parse('$_baseUrl/vision/identify-dish'),
+      headers: _headers,
+      body: jsonEncode({'image_b64': b64, 'mime_type': mimeType}),
+    );
+    final data = _handleResponse(response);
+    return DishIdentifyResult.fromJson(data);
+  }
+
+  /// Returns the WebSocket URL for the AI cooking companion (vision + audio).
+  String get visionCompanionWsUrl {
+    // Convert http(s) base URL to ws(s) and point to companion endpoint
+    final wsBase = _baseUrl
+        .replaceFirst('https://', 'wss://')
+        .replaceFirst('http://', 'ws://');
+    return '$wsBase/vision/ws/companion';
+  }
 }
 
 /// Result from authentication operations.
@@ -418,4 +462,66 @@ class GlobalSearchResult {
   final int totalResults;
 
   GlobalSearchResult({required this.results, required this.totalResults});
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Vision AI result models
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Result from the ingredient scanner endpoint.
+class IngredientScanResult {
+  final List<String> ingredients;
+  final List<String> quantities;
+  final List<String> healthNotes;
+  final List<Recipe> recipes;
+
+  IngredientScanResult({
+    required this.ingredients,
+    required this.quantities,
+    required this.healthNotes,
+    required this.recipes,
+  });
+
+  factory IngredientScanResult.fromJson(Map<String, dynamic> json) {
+    return IngredientScanResult(
+      ingredients: List<String>.from(json['ingredients'] ?? []),
+      quantities: List<String>.from(json['quantities'] ?? []),
+      healthNotes: List<String>.from(json['health_notes'] ?? []),
+      recipes: ((json['recipes'] ?? []) as List)
+          .map((r) => Recipe.fromJson(r as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+/// Result from the dish identification endpoint.
+class DishIdentifyResult {
+  final String dishName;
+  final String cuisine;
+  final double confidence;
+  final String description;
+  final List<String> healthTags;
+  final List<Recipe> recipes;
+
+  DishIdentifyResult({
+    required this.dishName,
+    required this.cuisine,
+    required this.confidence,
+    required this.description,
+    required this.healthTags,
+    required this.recipes,
+  });
+
+  factory DishIdentifyResult.fromJson(Map<String, dynamic> json) {
+    return DishIdentifyResult(
+      dishName: json['dish_name'] ?? '',
+      cuisine: json['cuisine'] ?? '',
+      confidence: ((json['confidence'] ?? 0.5) as num).toDouble(),
+      description: json['description'] ?? '',
+      healthTags: List<String>.from(json['health_tags'] ?? []),
+      recipes: ((json['recipes'] ?? []) as List)
+          .map((r) => Recipe.fromJson(r as Map<String, dynamic>))
+          .toList(),
+    );
+  }
 }
