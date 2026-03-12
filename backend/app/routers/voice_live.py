@@ -397,12 +397,12 @@ class GeminiLiveSession:
                 # Get tools schema BEFORE creating config
                 tools_schema = FunctionRegistry.get_tools_schema()
 
-                # Live API configuration
-                # AUDIO + TEXT: AI speaks AND sends a text transcript of each
-                # response so the on-screen captions update in real-time.
-                # AUDIO-only was the old config — it kept the screen blank.
+                # Live API configuration.
+                # gemini-live-2.5-flash-native-audio is a native-audio model:
+                # - response_modalities must be ["AUDIO"] only (TEXT causes 1007 close)
+                # - Transcripts come via output_audio_transcription, not TEXT modality
                 config = types.LiveConnectConfig(
-                    response_modalities=["AUDIO", "TEXT"],
+                    response_modalities=["AUDIO"],
                     speech_config=types.SpeechConfig(
                         voice_config=types.VoiceConfig(
                             prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -957,22 +957,31 @@ class GeminiLiveSession:
                                 continue
 
                         # ── Text transcript ───────────────────────────────────
-                        # Extract transcript from response.text (AUDIO+TEXT modality).
-                        # Belt-and-suspenders: also check server_content.model_turn.parts
-                        # for older SDK versions that surface text differently.
+                        # gemini-live-2.5-flash-native-audio (AUDIO-only modality):
+                        # transcripts come via server_content.output_transcription.text
+                        # or server_content.model_turn.parts[].text (SDK version dependent).
                         transcript_text = None
-                        if hasattr(response, 'text') and response.text:
-                            transcript_text = response.text
-                        elif hasattr(response, 'server_content') and response.server_content:
+
+                        if hasattr(response, 'server_content') and response.server_content:
                             sc = response.server_content
-                            mt = getattr(sc, 'model_turn', None)
-                            if mt and getattr(mt, 'parts', None):
-                                for part in mt.parts:
-                                    t = getattr(part, 'text', None)
-                                    if t:
-                                        transcript_text = (transcript_text or '') + t
+                            # Native audio transcript field (preferred)
+                            ot = getattr(sc, 'output_transcription', None)
+                            if ot and getattr(ot, 'text', None):
+                                transcript_text = ot.text
+                            # Fallback: model_turn parts
+                            if not transcript_text:
+                                mt = getattr(sc, 'model_turn', None)
+                                if mt and getattr(mt, 'parts', None):
+                                    for part in mt.parts:
+                                        t = getattr(part, 'text', None)
+                                        if t:
+                                            transcript_text = (transcript_text or '') + t
+                        # Final fallback: response.text (older SDK)
+                        if not transcript_text and hasattr(response, 'text') and response.text:
+                            transcript_text = response.text
+
                         if transcript_text:
-                            logger.info(f"💬 Gemini: {transcript_text[:80]}")
+                            logger.info(f"Gemini: {transcript_text[:80]}")
                             await self.websocket.send_json({"type": "transcript", "text": transcript_text})
                             self.messages_sent += 1
 
