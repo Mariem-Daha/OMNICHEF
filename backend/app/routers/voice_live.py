@@ -42,9 +42,8 @@ RECEIVE_SAMPLE_RATE = 24000  # Gemini outputs 24kHz
 
 # Gemini Live model on Vertex AI (stable ID as of 2026-02-21)
 GEMINI_LIVE_MODEL = 'gemini-live-2.5-flash-native-audio'
-# Fallback for Gemini API key (no Vertex).
-# gemini-2.0-flash-exp does NOT support Live API — use the dedicated live model.
-GEMINI_LIVE_MODEL_FALLBACK = 'gemini-2.0-flash-live-001'
+# Same model used on both Vertex and API key paths.
+GEMINI_LIVE_MODEL_FALLBACK = 'gemini-live-2.5-flash-native-audio'
 
 # Active sessions tracking
 active_sessions: Dict[str, "GeminiLiveSession"] = {}
@@ -343,35 +342,43 @@ class GeminiLiveSession:
         logger.info(f"✨ Created session: {self.session_id}")
 
     async def initialize(self):
-        """Initialize the Gemini Live session — prefers Gemini API key, falls back to Vertex AI."""
+        """Initialize the Gemini Live session.
+
+        Priority:
+        1. Vertex AI — required for gemini-live-2.5-flash-native-audio.
+        2. Gemini API key — same model; works if the key has Live API access.
+        """
+        import os
         try:
-            if settings.gemini_api_key:
-                # ── Gemini API key path (direct, most reliable) ──
-                self.client = genai.Client(
-                    api_key=settings.gemini_api_key,
-                    http_options={'api_version': 'v1alpha'}
-                )
-                self._use_vertex = False
-                logger.info(f"✅ Gemini API key client initialized")
-            elif settings.vertex_project_id:
-                # ── Vertex AI fallback ──
-                import os
-                if settings.google_application_credentials:
+            if settings.vertex_project_id:
+                # Ensure credentials file is in place for google-auth ADC
+                google_creds_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '')
+                if not google_creds_path and settings.google_application_credentials:
                     os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = settings.google_application_credentials
-                    logger.info(f"🔑 Using service account: {settings.google_application_credentials}")
+                    google_creds_path = settings.google_application_credentials
+                logger.info(f"🔑 GOOGLE_APPLICATION_CREDENTIALS={google_creds_path or '(ADC)'}")
                 self.client = genai.Client(
                     vertexai=True,
                     project=settings.vertex_project_id,
                     location=settings.vertex_location,
                 )
                 self._use_vertex = True
-                logger.info(f"✅ Vertex AI client initialized (project={settings.vertex_project_id})")
+                logger.info(f"✅ Vertex AI client ready (project={settings.vertex_project_id}, model={GEMINI_LIVE_MODEL})")
+
+            elif settings.gemini_api_key:
+                # Direct Gemini API — gemini-live-2.5-flash-native-audio requires v1beta
+                self.client = genai.Client(
+                    api_key=settings.gemini_api_key,
+                    http_options={'api_version': 'v1beta'}
+                )
+                self._use_vertex = False
+                logger.info(f"✅ Gemini API key client ready (model={GEMINI_LIVE_MODEL})")
+
             else:
-                logger.error("❌ Neither GEMINI_API_KEY nor VERTEX_PROJECT_ID is set")
+                logger.error("❌ Neither VERTEX_PROJECT_ID nor GEMINI_API_KEY is configured")
                 await self.websocket.send_json({"type": "error", "error": "No AI credentials configured"})
                 return False
 
-            logger.info(f"✅ Client ready for session: {self.session_id}")
             return True
 
         except Exception as e:
@@ -410,7 +417,7 @@ class GeminiLiveSession:
                     tools=tools_schema,
                 )
 
-                model = GEMINI_LIVE_MODEL if self._use_vertex else GEMINI_LIVE_MODEL_FALLBACK
+                model = GEMINI_LIVE_MODEL  # always use gemini-live-2.5-flash-native-audio
                 logger.info(f"🔌 Connecting to Gemini Live API (attempt {attempt + 1}/{max_reconnect_attempts}) model={model}")
                 tool_names = [fd.name for fd in tools_schema[0].function_declarations]
                 logger.info(f"📦 Registered {len(tool_names)} tools: {tool_names}")
@@ -423,7 +430,11 @@ class GeminiLiveSession:
                     self.gemini_session = session
                     logger.info(f"✅ Connected to Gemini Live API: {self.session_id}")
 
-                    # Create concurrent tasks for bidirectional communication
+                    # Run both tasks concurrently.
+                    # gather() keeps both alive for the full session lifetime.
+                    # handle_client_audio sets is_active=False when the client
+                    # disconnects; handle_gemini_responses checks is_active in
+                    # its while-loop and exits cleanly.
                     client_task = asyncio.create_task(
                         self.handle_client_audio(),
                         name="client_audio"
@@ -433,19 +444,17 @@ class GeminiLiveSession:
                         name="gemini_responses"
                     )
 
-                    # Wait for either task to complete
-                    done, pending = await asyncio.wait(
-                        [client_task, gemini_task],
-                        return_when=asyncio.FIRST_COMPLETED
-                    )
-
-                    # Cancel remaining tasks
-                    for task in pending:
-                        task.cancel()
-                        try:
-                            await task
-                        except asyncio.CancelledError:
-                            pass
+                    try:
+                        await asyncio.gather(client_task, gemini_task)
+                    except Exception as gather_err:
+                        logger.error(f"❌ Session gather error: {gather_err}")
+                        for task in [client_task, gemini_task]:
+                            if not task.done():
+                                task.cancel()
+                                try:
+                                    await task
+                                except (asyncio.CancelledError, Exception):
+                                    pass
 
                     # Session ended normally
                     logger.info(f"✅ Session ended gracefully: {self.session_id}")
