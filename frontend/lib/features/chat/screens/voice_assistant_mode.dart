@@ -420,7 +420,7 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
     final voiceWsUrl = ApiService.baseUrl
         .replaceFirst('https://', 'wss://')
         .replaceFirst('http://', 'ws://');
-    await _geminiService.connect('$voiceWsUrl/ws');
+    await _geminiService.connect('$voiceWsUrl/voice/ws');
 
     // BUG FIX: Send greetingDelivered:true because the local hardcoded greeting
     // is already visible.  Sending false caused the server to trigger a second

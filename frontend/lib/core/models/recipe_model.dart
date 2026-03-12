@@ -87,13 +87,30 @@ class Recipe {
     );
   }
 
+  // Backend base URL (same dart-define used by ApiService).
+  static const String _backendBase = String.fromEnvironment(
+    'API_URL',
+    defaultValue: 'http://localhost:8000/api',
+  );
+
+  /// Rewrite an external image URL through the backend proxy so that
+  /// CanvasKit/XHR fetches don't hit CORS restrictions.
+  static String _proxyImageUrl(String? raw) {
+    if (raw == null || raw.isEmpty) return '';
+    // Already a relative or same-origin URL — no proxy needed.
+    if (!raw.startsWith('http')) return raw;
+    // Already points to our own backend — no proxy needed.
+    if (raw.contains('omnichef-backend') || raw.contains('localhost') || raw.contains('127.0.0.1')) return raw;
+    return '$_backendBase/recipes/global/image-proxy?url=${Uri.encodeComponent(raw)}';
+  }
+
   /// Create Recipe from JSON (API response).
   factory Recipe.fromJson(Map<String, dynamic> json) {
     return Recipe(
-      id: json['id'] ?? '',
+      id: json['id']?.toString() ?? '',
       name: json['name'] ?? '',
       description: json['description'] ?? '',
-      imageUrl: json['image_url'] ?? '',
+      imageUrl: _proxyImageUrl(json['image_url'] ?? json['image'] ?? ''),
       cuisine: json['cuisine'] ?? 'Other',
       prepTime: json['prep_time'] ?? 0,
       cookTime: json['cook_time'] ?? 0,

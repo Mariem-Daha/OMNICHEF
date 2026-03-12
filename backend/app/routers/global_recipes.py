@@ -182,6 +182,29 @@ async def get_global_leftovers(
     return [_map_recipe(r) for r in info_resp.json()]
 
 
+@router.get("/image-proxy")
+async def proxy_image(url: str = Query(...)):
+    """
+    Proxy external recipe images to avoid CORS issues on web.
+    Must be declared BEFORE /{spoonacular_id} so FastAPI doesn't try to
+    cast "image-proxy" as an integer.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            resp = await client.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; OmniChef/1.0)"},
+            )
+        content_type = resp.headers.get("content-type", "image/jpeg")
+        return StreamingResponse(
+            iter([resp.content]),
+            media_type=content_type,
+            headers={"Cache-Control": "public, max-age=86400", "Access-Control-Allow-Origin": "*"},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not fetch image: {exc}")
+
+
 @router.get("/{spoonacular_id}")
 async def get_global_recipe_by_id(spoonacular_id: int):
     """Get a single Spoonacular recipe by numeric ID."""
@@ -199,26 +222,3 @@ async def get_global_recipe_by_id(spoonacular_id: int):
         raise HTTPException(status_code=resp.status_code, detail="Spoonacular error")
 
     return _map_recipe(resp.json())
-
-
-@router.get("/image-proxy")
-async def proxy_image(url: str = Query(...)):
-    """
-    Proxy external recipe images to avoid CORS issues on web.
-    The Flutter frontend should request  /api/recipes/global/image-proxy?url=<encoded-url>
-    instead of loading images directly.
-    """
-    try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-            resp = await client.get(
-                url,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; OmniChef/1.0)"},
-            )
-        content_type = resp.headers.get("content-type", "image/jpeg")
-        return StreamingResponse(
-            iter([resp.content]),
-            media_type=content_type,
-            headers={"Cache-Control": "public, max-age=86400"},
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Could not fetch image: {exc}")
