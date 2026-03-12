@@ -343,13 +343,20 @@ class GeminiLiveSession:
         logger.info(f"✨ Created session: {self.session_id}")
 
     async def initialize(self):
-        """Initialize the Gemini Live session — prefers Vertex AI, falls back to API key."""
+        """Initialize the Gemini Live session — prefers Gemini API key, falls back to Vertex AI."""
         try:
-            if settings.vertex_project_id:
-                # ── Vertex AI path (recommended: supports gemini-live-2.5-flash) ──
+            if settings.gemini_api_key:
+                # ── Gemini API key path (direct, most reliable) ──
+                self.client = genai.Client(
+                    api_key=settings.gemini_api_key,
+                    http_options={'api_version': 'v1alpha'}
+                )
+                self._use_vertex = False
+                logger.info(f"✅ Gemini API key client initialized")
+            elif settings.vertex_project_id:
+                # ── Vertex AI fallback ──
                 import os
                 if settings.google_application_credentials:
-                    # Must be set as OS env var for google-auth ADC to pick it up
                     os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = settings.google_application_credentials
                     logger.info(f"🔑 Using service account: {settings.google_application_credentials}")
                 self.client = genai.Client(
@@ -358,18 +365,10 @@ class GeminiLiveSession:
                     location=settings.vertex_location,
                 )
                 self._use_vertex = True
-                logger.info(f"✅ Vertex AI client initialized (project={settings.vertex_project_id}, location={settings.vertex_location})")
-            elif settings.gemini_api_key:
-                # ── Gemini API key fallback ──
-                self.client = genai.Client(
-                    api_key=settings.gemini_api_key,
-                    http_options={'api_version': 'v1alpha'}
-                )
-                self._use_vertex = False
-                logger.info(f"✅ Gemini API key client initialized")
+                logger.info(f"✅ Vertex AI client initialized (project={settings.vertex_project_id})")
             else:
-                logger.error("❌ Neither VERTEX_PROJECT_ID nor GEMINI_API_KEY is set")
-                await self.websocket.close(code=1008, reason="No AI credentials configured")
+                logger.error("❌ Neither GEMINI_API_KEY nor VERTEX_PROJECT_ID is set")
+                await self.websocket.send_json({"type": "error", "error": "No AI credentials configured"})
                 return False
 
             logger.info(f"✅ Client ready for session: {self.session_id}")
@@ -560,12 +559,8 @@ class GeminiLiveSession:
         Send to Gemini Live API with VAD and silence detection
         """
         try:
-            # Send connection confirmation to Flutter client
-            await self.websocket.send_json({
-                "type": "connected",
-                "session_id": self.session_id
-            })
-            logger.info(f"📤 Sent connection confirmation: {self.session_id}")
+            # NOTE: "connected" is now sent early in websocket_endpoint before
+            # Gemini connects, so we don't send it again here.
 
             # ── Wait briefly for a user_context message before greeting ──
             # The Flutter client sends this as the very first message with the
@@ -1054,9 +1049,17 @@ async def websocket_endpoint(websocket: WebSocket, db: Session = Depends(get_db)
             await websocket.close(code=1008, reason="Server at capacity")
             return
 
-        # Create and initialize session
+        # Create session object
         session = GeminiLiveSession(websocket, db)
         active_sessions[session.session_id] = session
+
+        # Send "connected" immediately so the Flutter client doesn't time out
+        # while we're still connecting to the Gemini Live API.
+        await websocket.send_json({
+            "type": "connected",
+            "session_id": session.session_id
+        })
+        logger.info(f"📤 Sent early connection confirmation: {session.session_id}")
 
         if await session.initialize():
             logger.info(f"✅ Session initialized: {session.session_id}")
