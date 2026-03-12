@@ -1,6 +1,9 @@
 ﻿
+// ignore_for_file: avoid_web_libraries_in_flutter
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:html' as html;
+import 'dart:js' as js;
 import 'dart:math' as math;
 import 'dart:ui';
 import 'dart:convert';
@@ -8,11 +11,13 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:camera/camera.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/providers/user_provider.dart';
 import '../../../core/widgets/ai_wave_overlay.dart';
 import '../services/gemini_live_service.dart';
+import '../../../core/services/api_service.dart';
 import '../../vision/screens/ingredient_scanner_screen.dart';
 import '../../vision/screens/dish_identifier_screen.dart';
 
@@ -46,11 +51,18 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
   // Using a Completer lets stop() unblock the waiting future (onPlayerComplete.first
   // never fires on stop, which caused the service to get stuck after barge-in).
   Completer<void>? _audioCompleter;
+  // Web-only: subscription to window.postMessage for CuisineeAudio speak_end.
+  StreamSubscription? _webSpeakEndSub;
 
   // State
   String _aiState = "Initializing...";
   bool _isConnecting = true;
   bool _isSpeaking = false;
+
+  // Greeting shown from the very first frame (no post-frame-callback delay).
+  static const String _greetingText =
+      "Welcome back, Chef! I\u2019m Cuisin\u00e9e \u2014 your AI kitchen companion. "
+      "Ask me for a recipe, say \u2018what can I make with chicken\u2019, or just tell me what you\u2019re craving!";
 
   // Phrase cycling removed â€” simple labels kept
 
@@ -79,6 +91,9 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
   bool _isSendingFrame = false;
   /// Periodic timer for automatic vision probing (step validation / ingredient ID).
   Timer? _visionProbeTimer;
+  /// True once the AI has confirmed it can see an ingredient in the frame.
+  /// Recipes and overlays must NOT appear before this flag is set.
+  bool _ingredientDetected = false;
 
   @override
   void initState() {
@@ -118,31 +133,23 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
   }
 
   void _initGeminiLive() async {
-    // ── INSTANT LOCAL GREETING ─────────────────────────────────────────────
-    // Show a hardcoded greeting the millisecond the screen loads — zero latency.
-    // The WebSocket connects quietly in the background while the greeting is
-    // already visible. No 10-second silence on stage.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       setState(() {
         _isConnecting = false;
         _aiState = "Ready";
-        _currentResponseText =
-            "Welcome back, Chef! I'm Cuisinée — your AI kitchen companion. "
-            "Ask me for a recipe, say 'what can I make with chicken', or just tell me what you're craving!";
-        _activeContent = _buildTextResponse(_currentResponseText);
       });
     });
-    // ─────────────────────────────────────────────────────────────────────
 
     // Setup callbacks
     _geminiService.onStateChanged = (state) {
-      // Non-UI side-effects that don't need a frame boundary
+      // Non-UI side-effects that don't need a frame boundary.
+      // Stop audio on any state change AWAY from speaking. This correctly
+      // handles barge-ins (speaking→connected), disconnections, and errors.
+      // It is a safe no-op on normal transitions (processing, listening) because
+      // the audio player is already idle by the time those states are reached.
       if (state != LiveState.speaking) {
-        if (_audioCompleter != null && !_audioCompleter!.isCompleted) {
-          _audioCompleter!.complete();
-        }
-        _uiAudioPlayer?.stop();
+        _stopAllAudio();
       }
       _updateRingSpeed(state);
 
@@ -166,6 +173,14 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
               case LiveState.processing:
                 _aiState = "Thinking...";
                 _isConnecting = false;
+                // A new AI turn is starting — clear the previous response text
+                // (which may be the initial greeting or last AI reply) so the
+                // upcoming transcript and audio land on a clean slate. Only
+                // cleared when no recipe/timer function widget is displayed.
+                if (!_functionContentActive) {
+                  _currentResponseText = "";
+                  _activeContent = null;
+                }
                 break;
               case LiveState.speaking:
                 _aiState = "Speaking...";
@@ -193,14 +208,29 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
        WidgetsBinding.instance.addPostFrameCallback((_) {
          if (!mounted) return;
          setState(() {
-            if (_geminiService.state == LiveState.speaking) {
-               _currentResponseText += text;
-            } else {
-               _currentResponseText = text;
+            // Always accumulate — Gemini streams transcript in fragments
+            // (e.g. word-by-word) during the processing phase before audio
+            // plays. Replacing instead of appending caused only the last
+            // fragment to show, effectively making subtitles blank.
+            _currentResponseText += text;
+
+            // Detect ingredient confirmation from vision probe
+            if (_cameraOn && !_ingredientDetected &&
+                _currentResponseText.contains('INGREDIENT_DETECTED:')) {
+              _ingredientDetected = true;
+              // Now safe to start periodic probing for recipe suggestions
+              _startVisionProbing();
             }
-            // Show AI text response when no function widget is active
+
+            // Show AI text response when no function widget is active.
+            // In camera mode, suppress text until ingredient detected
+            // (avoids showing "I can't see anything" as a big overlay).
             if (!_functionContentActive) {
-              _activeContent = _buildTextResponse(_currentResponseText);
+              if (!_cameraOn || _ingredientDetected ||
+                  _currentResponseText.contains("can't clearly see") ||
+                  _currentResponseText.contains("can\u2019t clearly see")) {
+                _activeContent = _buildTextResponse(_currentResponseText);
+              }
             }
          });
        });
@@ -301,48 +331,78 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
     _geminiService.onAudioReadyToPlay = (wavBytes, sampleRate) async {
       if (!mounted) return;
 
+      // Cancel any dangling completer/sub from a previous turn.
+      _stopAllAudio();
+
+      _audioCompleter = Completer<void>();
+      final completer = _audioCompleter!;
+
       try {
-        print('ðŸ”Š Playing audio on UI thread (${wavBytes.length} bytes, ${sampleRate}Hz)');
+        if (kIsWeb) {
+          // ── Web Audio API path (iOS Safari + all mobile browsers) ─────────
+          // audioplayers_web uses HTML <audio>.play() which iOS Safari blocks
+          // unless called synchronously inside a user-gesture handler.
+          // CuisineeAudio.playPcmChunk (Web Audio API) stays unlocked for the
+          // whole session once our first-tap unlock script fires.
 
-        // Complete any previous pending completer so dangling futures don't linger
-        if (_audioCompleter != null && !_audioCompleter!.isCompleted) {
-          _audioCompleter!.complete();
-        }
+          // Strip the 44-byte WAV header — what remains is raw Int16 PCM.
+          final pcmBytes = wavBytes.sublist(44);
+          final b64 = base64Encode(pcmBytes);
 
-        // Stop any existing playback and create a fresh player
-        await _uiAudioPlayer?.stop();
-        await _uiAudioPlayer?.dispose();
-        _uiAudioPlayer = AudioPlayer();
-        await _uiAudioPlayer?.setReleaseMode(ReleaseMode.stop);
+          // Subscribe BEFORE playing so we never miss a very short clip.
+          _webSpeakEndSub?.cancel();
+          _webSpeakEndSub = html.window.onMessage.listen((html.MessageEvent event) {
+            try {
+              final raw = event.data;
+              if (raw == null) return;
+              final source = (raw as dynamic)['source'] as String?;
+              final type   = (raw as dynamic)['type']   as String?;
+              if (source == 'CuisineeAudio' && type == 'speak_end') {
+                if (!completer.isCompleted) completer.complete();
+              }
+            } catch (_) {}
+          });
 
-        // Set up the cancellable completer BEFORE starting playback
-        _audioCompleter = Completer<void>();
-        final completer = _audioCompleter!;
+          // Resume AudioContext — iOS suspends it between interactions.
+          try { js.context['CuisineeAudio']?.callMethod('resumePlayback', []); } catch (_) {}
 
-        // Natural completion â†’ resolve completer
-        _uiAudioPlayer!.onPlayerComplete.listen((_) {
-          if (!completer.isCompleted) completer.complete();
-        });
-
-        // Also resolve on any stop/error state so we never hang
-        _uiAudioPlayer!.onPlayerStateChanged.listen((state) {
-          if (state == PlayerState.stopped || state == PlayerState.completed) {
+          // Hand raw PCM to the Web Audio scheduler.
+          try {
+            js.context['CuisineeAudio']?.callMethod('playPcmChunk', [b64]);
+          } catch (e) {
             if (!completer.isCompleted) completer.complete();
           }
-        });
 
-        await _uiAudioPlayer?.play(BytesSource(wavBytes));
+          // Wait for speak_end or barge-in cancellation.
+          await completer.future;
+          _webSpeakEndSub?.cancel();
+          _webSpeakEndSub = null;
 
-        // Wait for natural completion OR cancellation via barge-in
-        await completer.future;
+        } else {
+          // ── Native path (iOS app / Android) ───────────────────────────────
+          await _uiAudioPlayer?.stop();
+          await _uiAudioPlayer?.dispose();
+          _uiAudioPlayer = AudioPlayer();
+          await _uiAudioPlayer?.setReleaseMode(ReleaseMode.stop);
 
-        print('âœ… Audio playback complete (or cancelled)');
+          _uiAudioPlayer!.onPlayerComplete.listen((_) {
+            if (!completer.isCompleted) completer.complete();
+          });
+          _uiAudioPlayer!.onPlayerStateChanged.listen((state) {
+            if (state == PlayerState.stopped || state == PlayerState.completed) {
+              if (!completer.isCompleted) completer.complete();
+            }
+          });
 
-        // Notify service that playback is done
+          await _uiAudioPlayer?.play(BytesSource(wavBytes));
+          await completer.future;
+        }
+
+        // Notify service — triggers auto-start mic after 300 ms breath pause.
         _geminiService.onAudioPlaybackComplete();
 
       } catch (e) {
-        print('âŒ Error playing audio on UI thread: $e');
+        if (!completer.isCompleted) completer.complete();
         _geminiService.onAudioPlaybackComplete();
       }
     };
@@ -357,10 +417,17 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
     };
 
     // Connect — in the background while greeting is already showing
-    await _geminiService.connect("ws://localhost:8000/api/voice/ws");
+    final voiceWsUrl = ApiService.baseUrl
+        .replaceFirst('https://', 'wss://')
+        .replaceFirst('http://', 'ws://');
+    await _geminiService.connect('$voiceWsUrl/voice/ws');
 
-    // Send user context with greetingDelivered:true so the backend does NOT
-    // trigger an AI greeting — the local hardcoded one already played.
+    // BUG FIX: Send greetingDelivered:true because the local hardcoded greeting
+    // is already visible.  Sending false caused the server to trigger a second
+    // Gemini greeting which (a) wasted a full turn before the user could speak,
+    // (b) inflated the server-side adaptive noise floor while the speakers were
+    // playing, making subsequent user speech harder to detect, and (c) produced
+    // a confusing double-greeting experience.
     if (mounted) {
       final user = context.read<UserProvider>().user;
       if (user != null) {
@@ -379,87 +446,116 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
   }
   
   void _toggleListening() async {
-    print('ðŸŽ¯ DEBUG: Orb tapped - Current state: ${_geminiService.state.name}');
-    print('ðŸŽ¯ DEBUG: isConnected: ${_geminiService.isConnected}');
+    // ── Ensure microphone permission on iOS/Android ────────────────────────
+    if (!kIsWeb) {
+      final micStatus = await Permission.microphone.status;
+      if (micStatus.isPermanentlyDenied) {
+        if (mounted) _showPermissionDeniedDialog('Microphone');
+        return;
+      }
+      if (micStatus.isDenied) {
+        final result = await Permission.microphone.request();
+        if (!result.isGranted) {
+          if (mounted) _showMicPermissionDenied();
+          return;
+        }
+      }
+    }
 
-    // â”€â”€ Barge-in: if AI is speaking, interrupt it and start listening â”€â”€
+    // ── Barge-in: if AI is speaking, interrupt and start listening ─────────
     if (_geminiService.isSpeaking ||
         _geminiService.state == LiveState.speaking ||
         _geminiService.state == LiveState.processing) {
-      print('âš¡ Barge-in: interrupting AI speech');
-      // Stop UI audio player + buffer + send server interrupt
-      await _uiAudioPlayer?.stop();
+      _stopAllAudio();
       await _geminiService.sendInterrupt();
       setState(() {
         _isSpeaking = false;
         _aiState = "Listening...";
         _currentResponseText = "";
-        // Deliberately do NOT wipe _activeContent or _functionContentActive.
-        // Clearing them here caused the context wipe bug: AI would forget the
-        // active recipe and say "what would you like to make?" after any barge-in.
+        // Do NOT wipe _activeContent — avoids the context-wipe bug after barge-in.
       });
       final started = await _geminiService.startListening();
-      if (!started) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Couldn't start microphone â€” check browser permissions."),
-            backgroundColor: Colors.orange,
-            behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: 3),
-          ),
-        );
-      }
+      if (!started && mounted) _showMicPermissionDenied();
       return;
     }
 
     if (_geminiService.state == LiveState.listening) {
-       print('ðŸ›‘ DEBUG: Stopping listening...');
-       await _geminiService.stopListening();
+      await _geminiService.stopListening();
     } else {
-       print('ðŸŽ¤ DEBUG: Attempting to start listening...');
-       // Clear previous text interaction (but NOT function widgets like timer/recipe)
-       setState(() {
-          _currentResponseText = "";
-          if (!_functionContentActive) _activeContent = null;
-       });
-
-       final started = await _geminiService.startListening();
-       print('ðŸŽ¤ DEBUG: Start listening result: $started');
-
-       if (!started) {
-         print('âŒ DEBUG: Failed to start listening');
-         if (!mounted) return;
-         ScaffoldMessenger.of(context).clearSnackBars();
-         ScaffoldMessenger.of(context).showSnackBar(
-           const SnackBar(
-             content: Text("Couldn't start microphone â€” check browser permissions."),
-             backgroundColor: Colors.orange,
-             behavior: SnackBarBehavior.floating,
-             duration: Duration(seconds: 3),
-           ),
-         );
-       }
+      setState(() {
+        _currentResponseText = "";
+        if (!_functionContentActive) _activeContent = null;
+      });
+      final started = await _geminiService.startListening();
+      if (!started && mounted) _showMicPermissionDenied();
     }
+  }
+
+
+  // ── Permission helpers ────────────────────────────────────────────────────
+  void _showPermissionDeniedDialog(String permissionName) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('$permissionName Access Required'),
+        content: Text(
+          'Cuisinée needs $permissionName access to work properly. '
+          'Please go to Settings and allow access.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              openAppSettings();
+            },
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showMicPermissionDenied() {
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+        content: const Text('Microphone access denied — tap to open Settings.'),
+        backgroundColor: Colors.orange.shade800,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: 'Settings',
+          textColor: Colors.white,
+          onPressed: openAppSettings,
+        ),
+      ));
   }
 
   // â”€â”€ Error helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   /// Maps technical error strings to user-friendly one-liners.
   String _friendlyError(String raw) {
     final r = raw.toLowerCase();
-    if (r.contains('microphone') || r.contains('mic') || r.contains('permission')) {
-      return 'Microphone access needed â€” please check browser permissions.';
+    if (r.contains('microphone') || r.contains('mic') || r.contains('permission') ||
+        r.contains('cameraaccess') || r.contains('camera_access')) {
+      return kIsWeb
+          ? 'Access needed — please allow microphone/camera in your browser.'
+          : 'Access denied — please enable it in Settings > Cuisinée.';
+    }
+    if (r.contains('camera')) {
+      return 'Could not start camera. Please check Settings > Cuisinée.';
     }
     if (r.contains('not connected') || r.contains('websocket') || r.contains('connection')) {
-      return "Connection lost â€” tap the orb to reconnect.";
+      return "Connection lost — tap the orb to reconnect.";
     }
     if (r.contains('timeout') || r.contains('timed out')) {
-      return "Taking too long â€” please try again.";
+      return "Taking too long — please try again.";
     }
-    // Generic fallback (strip stack traces)
     final firstLine = raw.split('\n').first;
-    return firstLine.length > 80 ? '${firstLine.substring(0, 80)}â€¦' : firstLine;
+    return firstLine.length > 80 ? '\${firstLine.substring(0, 80)}…' : firstLine;
   }
 
   /// Adjust ring rotation speed to match the current assistant state.
@@ -491,8 +587,23 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
   // ── Camera / video mode helpers ──────────────────────────────────────────
 
   Future<void> _startCamera() async {
-    // On web the camera plugin delegates to camera_web (getUserMedia).
-    // On unsupported platforms we show a friendly message.
+    // ── Step 1: Request camera permission (iOS / Android) ─────────────────
+    if (!kIsWeb) {
+      final camStatus = await Permission.camera.status;
+      if (camStatus.isPermanentlyDenied) {
+        if (mounted) _showPermissionDeniedDialog('Camera');
+        return;
+      }
+      if (camStatus.isDenied) {
+        final result = await Permission.camera.request();
+        if (!result.isGranted) {
+          if (mounted) _showPermissionDeniedDialog('Camera');
+          return;
+        }
+      }
+    }
+
+    // ── Step 2: Open the camera ────────────────────────────────────────────
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
@@ -513,7 +624,7 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
       );
       final ctrl = CameraController(
         cam,
-        ResolutionPreset.low,
+        ResolutionPreset.high,
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.jpeg,
       );
@@ -522,15 +633,42 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
       setState(() {
         _cameraController = ctrl;
         _cameraOn = true;
+        _ingredientDetected = false;
+        // Clear any previous response text so camera view starts clean
+        _currentResponseText = "";
+        _activeContent = null;
+        _functionContentActive = false;
+        _isCookingMode = false;
       });
       _startFrameTimer();
-      _startVisionProbing();
+      // Send camera-specific greeting; DO NOT fire vision probe yet —
+      // wait until the AI detects an ingredient before suggesting recipes.
+      _geminiService.sendText(
+        "CAMERA_STARTED: The user just opened the camera. "
+        "Greet them naturally and tell them to show you an ingredient.",
+      );
+    } on CameraException catch (e) {
+      debugPrint('Camera start error: ${e.code} — ${e.description}');
+      if (!mounted) return;
+      if (e.code == 'CameraAccessDenied' ||
+          e.code == 'CameraAccessDeniedWithoutPrompt' ||
+          e.code == 'CameraAccessRestricted') {
+        _showPermissionDeniedDialog('Camera');
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not start camera: ${e.description ?? e.code}'),
+            backgroundColor: Colors.red.shade800,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     } catch (e) {
       debugPrint('Camera start error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Could not start camera: $e'),
+            content: Text('Could not start camera. Please try again.'),
             backgroundColor: Colors.red.shade800,
             behavior: SnackBarBehavior.floating,
           ),
@@ -568,20 +706,34 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
     _visionProbeTimer?.cancel();
     _visionProbeTimer = null;
     await _cameraController?.dispose();
-    if (mounted) setState(() { _cameraController = null; _cameraOn = false; });
+    if (mounted) setState(() {
+      _cameraController = null;
+      _cameraOn = false;
+      _ingredientDetected = false;
+    });
   }
 
   // ── Automatic vision probing ──────────────────────────────────────────────
 
-  /// Fires an immediate context-aware vision probe, then schedules periodic
-  /// step-validation probes while in cooking mode.
+  /// Schedules periodic step-validation or ingredient-detection probes.
+  /// Does NOT fire immediately — the camera greeting handles the first turn.
+  /// Call after a recipe is loaded (cooking mode) or after the user explicitly
+  /// asks the AI to look at an ingredient.
   void _startVisionProbing() {
     _visionProbeTimer?.cancel();
     _visionProbeTimer = null;
-    _sendVisionProbe(); // Fire immediately on camera open
     if (_isCookingMode) {
+      // Fire immediately for step validation in cooking mode
+      _sendVisionProbe();
       _visionProbeTimer = Timer.periodic(
         const Duration(seconds: 12),
+        (_) => _sendVisionProbe(),
+      );
+    } else {
+      // Ingredient-ID mode: delay first probe by 3 s so the user has time
+      // to point the camera before we start analysing.
+      _visionProbeTimer = Timer.periodic(
+        const Duration(seconds: 5),
         (_) => _sendVisionProbe(),
       );
     }
@@ -589,7 +741,7 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
 
   /// Sends one context-aware vision probe to the AI.
   /// In cooking mode: checks whether the current step is visually complete.
-  /// Otherwise: identifies visible ingredients and suggests a recipe.
+  /// Otherwise: identifies visible ingredients — only if confident.
   Future<void> _sendVisionProbe() async {
     if (!_cameraOn || _cameraController == null || !_cameraController!.value.isInitialized) return;
     if (_isCookingMode) {
@@ -600,13 +752,38 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
         "Look at the camera and tell me if this step is done.",
       );
     } else {
+      // Ingredient-ID mode: strict confidence rules to prevent hallucination.
       _geminiService.sendText(
-        "FRIDGE FORAGE: I'm pointing the camera at my counter right now. "
-        "Identify every ingredient you can see and suggest the best recipe we can make.",
+        "FRIDGE FORAGE: Look carefully at the camera frame. "
+        "Only name ingredients you can clearly and confidently see. "
+        "If nothing is clearly visible or confidence is low, say exactly: "
+        "'I can\u2019t clearly see any ingredients yet \u2014 show me something and I\u2019ll help you cook with it!' "
+        "Do NOT invent or guess ingredients. "
+        "If you do see ingredients confidently, say 'INGREDIENT_DETECTED:' then name them, then suggest a recipe.",
       );
     }
     await Future.delayed(const Duration(milliseconds: 300));
     await _captureAndSendFrame();
+  }
+
+  /// Stops the Web Audio API engine (web) AND the native audioplayer, then
+  /// resolves any pending completer so no futures hang.
+  // Stops any in-flight audio.
+  // IMPORTANT: CuisineeAudio.interrupt() is only called when audio is actually
+  // playing (completer is pending). Calling interrupt() unconditionally sets
+  // _interrupted=true for 400 ms in JS, which would silently block the NEXT
+  // turn's audio if the state-change callback fires after normal completion.
+  void _stopAllAudio() {
+    final bool inFlight = _audioCompleter != null && !_audioCompleter!.isCompleted;
+    if (inFlight) {
+      if (kIsWeb) {
+        try { js.context['CuisineeAudio']?.callMethod('interrupt', []); } catch (_) {}
+        _webSpeakEndSub?.cancel();
+        _webSpeakEndSub = null;
+      }
+      _audioCompleter!.complete();
+    }
+    _uiAudioPlayer?.stop();
   }
 
   @override
@@ -614,7 +791,11 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
     _frameTimer?.cancel();
     _visionProbeTimer?.cancel();
     _cameraController?.dispose();
-    _geminiService.disconnect();
+    _geminiService.disconnect(); // idempotent — safe if already called by _closeWithChime
+    _webSpeakEndSub?.cancel();
+    // Explicitly stop before dispose so the native audio layer halts immediately
+    // even if the above async disconnect hasn't finished yet.
+    _stopAllAudio();
     _uiAudioPlayer?.dispose();
     _earconPlayer?.dispose();
     _breathingController.dispose();
@@ -623,8 +804,14 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
     super.dispose();
   }
 
-  /// Plays the exit chime then calls widget.onClose.
+  /// Stops any ongoing AI speech, plays the exit chime, then calls widget.onClose.
   Future<void> _closeWithChime() async {
+    // ── Shut down AI immediately so audio stops the moment the user taps close ──
+    _stopAllAudio();
+    // Disconnect service (stops mic, barge-in monitoring, WebSocket, audio buffer).
+    // dispose() will call disconnect() again — that is safe/idempotent.
+    await _geminiService.disconnect();
+
     try {
       await _earconPlayer?.play(AssetSource('audio/chime_close.wav'));
       await Future.delayed(const Duration(milliseconds: 850));
@@ -635,148 +822,304 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
   @override
   Widget build(BuildContext context) {
     final isLandscape = MediaQuery.of(context).size.width > MediaQuery.of(context).size.height;
+    final cameraReady = _cameraOn && _cameraController != null && _cameraController!.value.isInitialized;
+
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          // Background: camera feed (video mode) or dark ambient glow (audio mode)
-          if (_cameraOn && _cameraController != null && _cameraController!.value.isInitialized)
-            Positioned.fill(
-              child: CameraPreview(_cameraController!),
-            )
-          else ...[
-            // Background ambient glow
-            Positioned(
-              right: -100, top: -100,
-              child: Container(
-                width: 500, height: 500,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.primary.withOpacity(0.1),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.primary.withOpacity(0.1),
-                      blurRadius: 100,
-                      spreadRadius: 50,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            // Siri wave overlay
-            Positioned.fill(
-              child: AiWaveOverlay(
-                waveController: _waveController,
-                micAmplitude: _micAmplitude,
-                voiceState: _geminiService.state,
-              ),
-            ),
-          ],
-          SafeArea(
-            child: Column(
+      body: cameraReady
+          ? _buildCameraScreen()
+          : Stack(
               children: [
-                // Header: state badge | close button
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                // Background ambient glow (audio-only mode)
+                Positioned(
+                  right: -100, top: -100,
+                  child: Container(
+                    width: 500, height: 500,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AppColors.primary.withOpacity(0.1),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.primary.withOpacity(0.1),
+                          blurRadius: 100,
+                          spreadRadius: 50,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Siri wave overlay
+                Positioned.fill(
+                  child: AiWaveOverlay(
+                    waveController: _waveController,
+                    micAmplitude: _micAmplitude,
+                    voiceState: _geminiService.state,
+                  ),
+                ),
+                SafeArea(
+                  child: Column(
                     children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              _isSpeaking ? Icons.volume_up : Icons.mic,
-                              color: _isSpeaking ? AppColors.secondary : AppColors.primary,
-                              size: 16,
-                            ),
-                            const SizedBox(width: 8),
-                            AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 400),
-                              transitionBuilder: (child, anim) => FadeTransition(
-                                opacity: anim,
-                                child: SlideTransition(
-                                  position: Tween<Offset>(
-                                    begin: const Offset(0, 0.3),
-                                    end: Offset.zero,
-                                  ).animate(anim),
-                                  child: child,
-                                ),
+                      _buildHeader(cameraActive: false),
+                      Expanded(
+                        child: isLandscape
+                            ? Row(
+                                children: [
+                                  Expanded(flex: 3, child: _buildLeftContentArea()),
+                                  Expanded(flex: 2, child: _buildRightAvatarArea()),
+                                ],
+                              )
+                            : Column(
+                                children: [
+                                  Expanded(flex: 4, child: _buildRightAvatarArea()),
+                                  Expanded(flex: 6, child: _buildLeftContentArea()),
+                                ],
                               ),
-                              child: Text(
-                                _aiState.toUpperCase(),
-                                key: ValueKey(_aiState),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 1.5,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      // Right-side action buttons
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (_cameraOn) ...[
-                            // Stop camera
-                            IconButton(
-                              tooltip: 'Stop Video',
-                              onPressed: _stopCamera,
-                              icon: const Icon(Icons.videocam_off_rounded, color: Colors.white, size: 20),
-                              style: IconButton.styleFrom(backgroundColor: Colors.red.withOpacity(0.55)),
-                            ),
-                            const SizedBox(width: 6),
-                          ] else ...[
-                            // Start camera
-                            IconButton(
-                              tooltip: 'Switch to Video Mode',
-                              onPressed: _startCamera,
-                              icon: const Icon(Icons.videocam_rounded, color: Colors.white, size: 20),
-                              style: IconButton.styleFrom(backgroundColor: Colors.white.withOpacity(0.12)),
-                            ),
-                            const SizedBox(width: 6),
-                          ],
-                          // Close
-                          IconButton(
-                            onPressed: _closeWithChime,
-                            icon: const Icon(Icons.close, color: Colors.white),
-                            style: IconButton.styleFrom(backgroundColor: Colors.white.withOpacity(0.1)),
-                          ),
-                        ],
                       ),
                     ],
                   ),
                 ),
-                // Main content area
-                Expanded(
-                  child: isLandscape
-                      ? Row(
-                          children: [
-                            Expanded(flex: 3, child: _buildLeftContentArea()),
-                            if (!_cameraOn)
-                              Expanded(flex: 2, child: _buildRightAvatarArea()),
-                          ],
-                        )
-                      : _cameraOn
-                          // Video mode: content fills the full height (orb hidden)
-                          ? _buildLeftContentArea()
-                          : Column(
-                              children: [
-                                Expanded(flex: 4, child: _buildRightAvatarArea()),
-                                Expanded(flex: 6, child: _buildLeftContentArea()),
-                              ],
-                            ),
+              ],
+            ),
+    );
+  }
+
+  /// Full-screen camera view: edge-to-edge preview with a minimal floating HUD.
+  /// No recipe overlays appear until an ingredient is detected.
+  Widget _buildCameraScreen() {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // 1. Edge-to-edge camera preview — fills the entire screen
+        _buildEdgeToEdgeCameraPreview(),
+
+        // 2. Gradient scrim at the top so HUD buttons are readable
+        Positioned(
+          top: 0, left: 0, right: 0,
+          child: Container(
+            height: 140,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Colors.black54, Colors.transparent],
+              ),
+            ),
+          ),
+        ),
+
+        // 3. Gradient scrim at the bottom for subtitle area
+        Positioned(
+          bottom: 0, left: 0, right: 0,
+          child: Container(
+            height: 200,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+                colors: [Colors.black87, Colors.transparent],
+              ),
+            ),
+          ),
+        ),
+
+        // 4. Floating HUD — state badge + stop-camera + close buttons
+        SafeArea(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: _buildHeader(cameraActive: true),
+          ),
+        ),
+
+        // 5. AI response subtitle — shown only after ingredient detected
+        //    OR for "I can't see anything" messages (always show those briefly)
+        if (_activeContent != null && _ingredientDetected)
+          Positioned(
+            bottom: 0, left: 0, right: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 400),
+                  child: _activeContent,
+                ),
+              ),
+            ),
+          )
+        else if (_currentResponseText.isNotEmpty && !_ingredientDetected &&
+                 (_currentResponseText.contains("can't clearly") ||
+                  _currentResponseText.contains("can\u2019t clearly") ||
+                  _currentResponseText.contains("Show me")))
+          Positioned(
+            bottom: 0, left: 0, right: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                child: _buildCameraSubtitle(_currentResponseText),
+              ),
+            ),
+          ),
+
+        // 6. "Waiting for ingredient" hint shown while no ingredient detected yet
+        if (!_ingredientDetected && _currentResponseText.isEmpty)
+          Positioned(
+            bottom: 0, left: 0, right: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                child: _buildCameraHint(),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Properly scaled camera preview for all platforms including iPhone Safari.
+  Widget _buildEdgeToEdgeCameraPreview() {
+    if (!kIsWeb) {
+      // Native: CameraPreview handles aspect ratio internally.
+      // Wrap in FittedBox to avoid stretching on devices with odd aspect ratios.
+      return SizedBox.expand(
+        child: FittedBox(
+          fit: BoxFit.cover,
+          child: SizedBox(
+            width: _cameraController!.value.previewSize?.height ?? 1920,
+            height: _cameraController!.value.previewSize?.width ?? 1080,
+            child: CameraPreview(_cameraController!),
+          ),
+        ),
+      );
+    }
+    // Web (iPhone Safari / Chrome): use raw HTML video element via CameraPreview.
+    // Flutter Web renders CameraPreview as a <video> tag; we need to ensure it
+    // fills the screen and maintains aspect ratio without stretching.
+    return SizedBox.expand(
+      child: FittedBox(
+        fit: BoxFit.cover,
+        child: CameraPreview(_cameraController!),
+      ),
+    );
+  }
+
+  /// Compact subtitle shown in camera mode for AI responses.
+  Widget _buildCameraSubtitle(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.65),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.12)),
+      ),
+      child: Text(
+        text.replaceAll('INGREDIENT_DETECTED:', '').trim(),
+        style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.4),
+        maxLines: 4,
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
+  /// "Point camera at an ingredient" hint shown before any detection.
+  Widget _buildCameraHint() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const Icon(Icons.camera_alt_outlined, color: Colors.white54, size: 18),
+        const SizedBox(width: 8),
+        Text(
+          'Point camera at an ingredient',
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.65),
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Shared header row: state badge + camera toggle + close button.
+  Widget _buildHeader({required bool cameraActive}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // State badge
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(cameraActive ? 0.55 : 0.1),
+              borderRadius: BorderRadius.circular(20),
+              border: cameraActive
+                  ? Border.all(color: Colors.white.withOpacity(0.18))
+                  : null,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _isSpeaking ? Icons.volume_up : Icons.mic,
+                  color: _isSpeaking ? AppColors.secondary : AppColors.primary,
+                  size: 16,
+                ),
+                const SizedBox(width: 8),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 400),
+                  transitionBuilder: (child, anim) => FadeTransition(
+                    opacity: anim,
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0, 0.3),
+                        end: Offset.zero,
+                      ).animate(anim),
+                      child: child,
+                    ),
+                  ),
+                  child: Text(
+                    _aiState.toUpperCase(),
+                    key: ValueKey(_aiState),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
                 ),
               ],
             ),
+          ),
+          // Action buttons
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (cameraActive) ...[
+                IconButton(
+                  tooltip: 'Stop Camera',
+                  onPressed: _stopCamera,
+                  icon: const Icon(Icons.videocam_off_rounded, color: Colors.white, size: 20),
+                  style: IconButton.styleFrom(backgroundColor: Colors.red.withOpacity(0.6)),
+                ),
+                const SizedBox(width: 6),
+              ] else ...[
+                IconButton(
+                  tooltip: 'Switch to Camera Mode',
+                  onPressed: _startCamera,
+                  icon: const Icon(Icons.videocam_rounded, color: Colors.white, size: 20),
+                  style: IconButton.styleFrom(backgroundColor: Colors.white.withOpacity(0.12)),
+                ),
+                const SizedBox(width: 6),
+              ],
+              IconButton(
+                onPressed: _closeWithChime,
+                icon: const Icon(Icons.close, color: Colors.white),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.black.withOpacity(cameraActive ? 0.5 : 0.1),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -795,9 +1138,14 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
           Expanded(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 500),
-              // When camera is on with no active content, show nothing so the
-              // live feed is fully visible — the AI will respond naturally.
-              child: _activeContent ?? (_cameraOn ? const SizedBox.shrink() : _buildIdleSuggestionList()),
+              // Priority: explicit widget > greeting/response text > idle chips.
+              // Showing _currentResponseText as a fallback lets the greeting
+              // appear in the very first frame (before _activeContent is set
+              // by the post-frame callback) and survive rapid state changes.
+              child: _activeContent
+                  ?? (_currentResponseText.isNotEmpty
+                      ? _buildTextResponse(_currentResponseText)
+                      : (_cameraOn ? const SizedBox.shrink() : _buildIdleSuggestionList())),
             ),
           ),
           if (!_isCookingMode && _functionContentActive && _currentResponseText.isNotEmpty)

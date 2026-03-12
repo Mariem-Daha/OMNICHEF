@@ -12,6 +12,7 @@ from ..models.recipe import Recipe, RecipeStep, NutritionInfo
 from ..models.user import User, SavedRecipe
 from ..schemas.recipe import RecipeResponse, RecipeListResponse, RecipeCreate
 from ..services.auth_service import get_current_user
+from ..services.recommendation_service import get_recommendations
 
 router = APIRouter()
 
@@ -207,6 +208,53 @@ def get_recipes_by_ingredients(
     matching_recipes.sort(key=lambda x: x[1], reverse=True)
     
     return [recipe_to_response(r, current_user) for r, _ in matching_recipes[:20]]
+
+
+@router.get("/recommendations", response_model=list[RecipeResponse])
+def get_recipe_recommendations(
+    preferences: list[str] = Query(default=[]),
+    allergies: list[str] = Query(default=[]),
+    disliked: list[str] = Query(default=[]),
+    limit: int = Query(default=10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_current_user),
+):
+    """
+    Return personalised recipe recommendations.
+
+    Pass the user's health goals, dietary restrictions and favourite ingredient
+    labels as *preferences* query parameters.  The engine scores every recipe
+    in the database and returns the top *limit* matches.
+
+    For authenticated users the stored profile is merged with any extra
+    preferences supplied in the request.
+    """
+    # Merge with authenticated user's stored preferences when available
+    merged_preferences = list(preferences)
+    merged_allergies = list(allergies)
+    merged_disliked = list(disliked)
+
+    if current_user:
+        merged_preferences = list(set(
+            merged_preferences
+            + (current_user.health_filters or [])
+            + (current_user.taste_preferences or [])
+        ))
+        merged_allergies = list(set(
+            merged_allergies + (current_user.allergies or [])
+        ))
+        merged_disliked = list(set(
+            merged_disliked + (current_user.disliked_ingredients or [])
+        ))
+
+    recommended = get_recommendations(
+        db=db,
+        preferences=merged_preferences,
+        allergies=merged_allergies,
+        disliked=merged_disliked,
+        limit=limit,
+    )
+    return [recipe_to_response(r, current_user) for r in recommended]
 
 
 @router.get("/{recipe_id}", response_model=RecipeResponse)

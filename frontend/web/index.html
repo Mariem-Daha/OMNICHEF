@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html>
 <head>
   <!--
@@ -18,12 +18,17 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="Your AI-powered cooking assistant.">
 
-  <!-- iOS meta tags & icons -->
+  <!-- Viewport — REQUIRED for correct scaling on iOS Safari -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+
+  <!-- PWA / iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="OMNICHEF">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Cuisinée">
+  <meta name="theme-color" content="#121212">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
@@ -31,17 +36,128 @@
 
   <title>Cuisinee</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    /* Ensure full-screen camera preview fills viewport on iPhone Safari */
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+    /* Flutter canvas: fill entire viewport including safe-area notch */
+    flt-glass-pane, flt-scene, flt-scene-host, canvas {
+      width: 100% !important;
+      height: 100% !important;
+    }
+    /* Camera <video> elements: cover mode, no distortion */
+    video {
+      object-fit: cover !important;
+      width: 100% !important;
+      height: 100% !important;
+    }
+  </style>
 </head>
 <body>
-  <!-- ═══════════════════════════════════════════════════════════════════════
+  <!--
+    iOS Safari Audio Unlock
+    Safari (and all browsers on iOS via WebKit) blocks audio until the user
+    has interacted with the page. This one-shot handler plays a silent buffer
+    to "unlock" both the Web Audio API context and the HTML <audio> element
+    used by audioplayers_web, so AI voice responses play without user having
+    to tap again.
+  -->
+  <script>
+    (function() {
+      var _audioUnlocked = false;
+      function _unlockAudio() {
+        if (_audioUnlocked) return;
+        _audioUnlocked = true;
+
+        // 1. Unlock HTML5 <audio> (used by audioplayers_web / BytesSource)
+        var silent = new Audio();
+        silent.play().catch(function() {});
+
+        // 2. Pre-warm / unlock the CuisineeAudio playback context.
+        //    On iOS, an AudioContext must be created AND have audio scheduled
+        //    inside a user-gesture handler to start in 'running' state.
+        //    Creating it lazily (outside a gesture) results in 'suspended',
+        //    and resume() without a gesture fails on older iOS versions.
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+
+        function _warmContext(ctx) {
+          if (ctx.state === 'suspended') ctx.resume().catch(function(){});
+          try {
+            var buf = ctx.createBuffer(1, 1, ctx.sampleRate || 24000);
+            var src = ctx.createBufferSource();
+            src.buffer = buf;
+            src.connect(ctx.destination);
+            src.start(0);
+          } catch(e) {}
+        }
+
+        if (window.CuisineeAudio) {
+          // Flutter already loaded — pre-create the playback context in this gesture.
+          if (!window.CuisineeAudio._playCtx ||
+              window.CuisineeAudio._playCtx.state === 'closed') {
+            window.CuisineeAudio._playCtx = new AC({ sampleRate: 24000 });
+            window.CuisineeAudio._playTime = 0;
+            window.CuisineeAudio._gainNode = null;
+          }
+          _warmContext(window.CuisineeAudio._playCtx);
+        } else {
+          // Flutter not yet loaded — create a temporary context to satisfy iOS,
+          // and schedule a retry so CuisineeAudio gets warmed once available.
+          var tmpCtx = new AC();
+          _warmContext(tmpCtx);
+          setTimeout(function() { try { tmpCtx.close(); } catch(e) {} }, 1000);
+          // Retry warming CuisineeAudio up to 5 times (covers slow-loading pages).
+          var retries = 0;
+          function _retryCuisineeWarm() {
+            if (window.CuisineeAudio) {
+              if (!window.CuisineeAudio._playCtx ||
+                  window.CuisineeAudio._playCtx.state === 'closed') {
+                window.CuisineeAudio._playCtx = new AC({ sampleRate: 24000 });
+                window.CuisineeAudio._playTime = 0;
+                window.CuisineeAudio._gainNode = null;
+              }
+              // Note: resume() here is outside a gesture but the context was
+              // pre-registered; on iOS 14.5+ resume() works without a gesture
+              // once the page has been interacted with.
+              window.CuisineeAudio._playCtx.resume().catch(function(){});
+            } else if (++retries < 5) {
+              setTimeout(_retryCuisineeWarm, 500);
+            }
+          }
+          setTimeout(_retryCuisineeWarm, 200);
+        }
+
+        document.removeEventListener('touchstart',  _unlockAudio, true);
+        document.removeEventListener('touchend',    _unlockAudio, true);
+        document.removeEventListener('pointerdown', _unlockAudio, true);
+        document.removeEventListener('click',       _unlockAudio, true);
+      }
+      document.addEventListener('touchstart',  _unlockAudio, true);
+      document.addEventListener('touchend',    _unlockAudio, true);
+      document.addEventListener('pointerdown', _unlockAudio, true);
+      document.addEventListener('click',       _unlockAudio, true);
+
+      // Persistent re-resume: covers iOS returning from sleep or tab-switch
+      // (the OS suspends AudioContexts when the page loses focus).
+      function _reResumeAudio() {
+        var ca = window.CuisineeAudio;
+        if (ca && ca._playCtx && ca._playCtx.state === 'suspended') {
+          ca._playCtx.resume().catch(function() {});
+        }
+      }
+      document.addEventListener('touchstart', _reResumeAudio, { passive: true });
+      document.addEventListener('pointerdown', _reResumeAudio, { passive: true });
+    })();
+  </script>
+  <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
        Cuisinee Web Audio Engine  v2
-       - Mic capture: downsample native rate → 16 kHz PCM, send via postMessage
+       - Mic capture: downsample native rate â†’ 16 kHz PCM, send via postMessage
        - Playback: gapless scheduled AudioBufferSourceNode at 24 kHz
-       - All Dart↔JS comms use window.postMessage (no allowInterop needed)
-  ════════════════════════════════════════════════════════════════════════ -->
+       - All Dartâ†”JS comms use window.postMessage (no allowInterop needed)
+  â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
   <script>
     window.CuisineeAudio = {
-      // ── internal ────────────────────────────────────────────────────────
+      // â”€â”€ internal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       _micCtx:    null,
       _micStream: null,
       _processor: null,
@@ -54,18 +170,24 @@
 
       _SPEECH_THRESHOLD: 0.003,  // float32 RMS threshold for VAD
 
-      // ── Microphone ──────────────────────────────────────────────────────
+      // â”€â”€ Microphone â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       // Called by Dart: starts mic, pushes chunks to Dart via postMessage.
       async startMic() {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              channelCount:     1,
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl:  true,
-            }
-          });
+          // Try progressively simpler constraints — older iOS Safari rejects some.
+          const constraintOptions = [
+            { audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } },
+            { audio: { channelCount: 1 } },
+            { audio: true },
+          ];
+          let stream = null;
+          let lastErr = null;
+          for (const c of constraintOptions) {
+            try { stream = await navigator.mediaDevices.getUserMedia(c); break; }
+            catch (e) { lastErr = e; }
+          }
+          if (!stream) throw lastErr || new Error('getUserMedia failed');
+
           this._micStream = stream;
           this._micCtx = new (window.AudioContext || window.webkitAudioContext)();
           const nativeRate   = this._micCtx.sampleRate;
@@ -96,7 +218,7 @@
             const out    = new Float32Array(outLen);
             for (let i = 0; i < outLen; i++) out[i] = input[Math.round(i * downRatio)];
 
-            // Float32 → Int16 PCM
+            // Float32 â†’ Int16 PCM
             const int16 = new Int16Array(outLen);
             for (let i = 0; i < outLen; i++) {
               const s = Math.max(-1, Math.min(1, out[i]));
@@ -114,7 +236,7 @@
 
           source.connect(this._processor);
           this._processor.connect(this._micCtx.destination);
-          console.log('[CuisineeAudio] Mic started — native=' + nativeRate + 'Hz → 16000Hz');
+          console.log('[CuisineeAudio] Mic started â€” native=' + nativeRate + 'Hz â†’ 16000Hz');
           return true;
         } catch (err) {
           console.error('[CuisineeAudio] Mic error:', err);
@@ -130,16 +252,29 @@
         console.log('[CuisineeAudio] Mic stopped');
       },
 
-      // ── Playback ────────────────────────────────────────────────────────
+      // â”€â”€ Playback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       // Called by Dart with each received PCM chunk (base64, 24 kHz, Int16).
-      playPcmChunk(base64) {
+      async playPcmChunk(base64) {
         if (this._interrupted) return;
 
         if (!this._playCtx || this._playCtx.state === 'closed') {
           this._playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
           this._playTime = 0;
+          this._gainNode = null;  // reset so it's recreated for the new context
         }
-        if (this._playCtx.state === 'suspended') this._playCtx.resume();
+        // iOS: a context created outside a user-gesture starts as 'suspended'.
+        // Await resume() so buffers are only scheduled on a running context —
+        // without this, src.start() is silently ignored on iOS Safari/Chrome.
+        if (this._playCtx.state === 'suspended') {
+          try { await this._playCtx.resume(); } catch(_) {}
+        }
+
+        // Route all audio through a shared GainNode.  interrupt() zeros it
+        // instantly without closing (and losing) the iOS-unlocked context.
+        if (!this._gainNode) {
+          this._gainNode = this._playCtx.createGain();
+          this._gainNode.connect(this._playCtx.destination);
+        }
 
         try {
           const bin  = atob(base64);
@@ -155,7 +290,7 @@
 
           const src = this._playCtx.createBufferSource();
           src.buffer = buf;
-          src.connect(this._playCtx.destination);
+          src.connect(this._gainNode);  // route through gain node
 
           const now   = this._playCtx.currentTime;
           const start = (this._playTime < now + 0.01) ? now + 0.02 : this._playTime;
@@ -180,11 +315,20 @@
         this._interrupted = true;
         this._isSpeaking  = false;
         this._playTime    = 0;
-        if (this._playCtx) {
-          try { this._playCtx.close(); } catch(_) {}
-          this._playCtx = null;
+        // Mute via GainNode — do NOT close AudioContext.
+        // Closing destroys the iOS gesture-unlock: any new context created
+        // outside a gesture will start in 'suspended' state and produce silence.
+        if (this._gainNode && this._playCtx) {
+          try { this._gainNode.gain.cancelScheduledValues(0); } catch(_) {}
+          try { this._gainNode.gain.setValueAtTime(0, this._playCtx.currentTime); } catch(_) {}
         }
-        setTimeout(() => { this._interrupted = false; }, 400);
+        setTimeout(() => {
+          this._interrupted = false;
+          // Restore volume for the next AI response.
+          if (this._gainNode && this._playCtx) {
+            try { this._gainNode.gain.setValueAtTime(1, this._playCtx.currentTime); } catch(_) {}
+          }
+        }, 400);
       },
 
       isSpeaking() {
@@ -192,187 +336,10 @@
         return this._isSpeaking && (this._playTime > this._playCtx.currentTime + 0.05);
       },
 
-      resumePlayback() {
-        if (this._playCtx && this._playCtx.state === 'suspended') this._playCtx.resume();
-      }
-    };
-  </script>
-  <script src="flutter_bootstrap.js" async></script>
-</body>
-</html>
-  <script>
-    window.CuisineeAudio = {
-      // ── internal state ──────────────────────────────────────────────────
-      _micCtx:      null,
-      _micStream:   null,
-      _processor:   null,
-      _onChunk:     null,   // Dart callback: fn(base64String)
-      _onSpeech:    null,   // Dart callback: fn(bool isSpeaking)
-
-      _playCtx:     null,
-      _playTime:    0,
-      _interrupted: false,
-      _isSpeaking:  false,
-      _silenceTimer: null,
-
-      // Energy threshold for VAD (0-1 range, float32)
-      _SPEECH_THRESHOLD: 0.003,
-
-      // ── Microphone ──────────────────────────────────────────────────────
-      async startMic(onChunkFn, onSpeechFn) {
-        this._onChunk  = onChunkFn;
-        this._onSpeech = onSpeechFn;
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              channelCount:      1,
-              echoCancellation:  true,
-              noiseSuppression:  true,
-              autoGainControl:   true,
-            }
-          });
-          this._micStream = stream;
-          // Create AudioContext at the browser's native sample rate
-          this._micCtx = new (window.AudioContext || window.webkitAudioContext)();
-          const nativeRate    = this._micCtx.sampleRate;
-          const targetRate    = 16000;
-          const downsampleRatio = nativeRate / targetRate;
-
-          const source     = this._micCtx.createMediaStreamSource(stream);
-          const bufferSize = 4096;
-          this._processor  = this._micCtx.createScriptProcessor(bufferSize, 1, 1);
-
-          let _wasSpeaking = false;
-
-          this._processor.onaudioprocess = (e) => {
-            if (!this._onChunk) return;
-            const input = e.inputBuffer.getChannelData(0); // Float32Array @ nativeRate
-
-            // ── Simple energy VAD ──
-            let energy = 0;
-            for (let i = 0; i < input.length; i++) energy += input[i] * input[i];
-            energy /= input.length;
-            const speaking = energy > this._SPEECH_THRESHOLD;
-            if (speaking !== _wasSpeaking) {
-              _wasSpeaking = speaking;
-              if (this._onSpeech) this._onSpeech(speaking);
-            }
-
-            // ── Downsample to 16 kHz ──
-            const outputLen = Math.round(input.length / downsampleRatio);
-            const output    = new Float32Array(outputLen);
-            for (let i = 0; i < outputLen; i++) {
-              output[i] = input[Math.round(i * downsampleRatio)];
-            }
-
-            // ── Float32 → Int16 PCM ──
-            const int16 = new Int16Array(outputLen);
-            for (let i = 0; i < outputLen; i++) {
-              const s = Math.max(-1, Math.min(1, output[i]));
-              int16[i] = s < 0 ? s * 32768 : s * 32767;
-            }
-
-            // ── Base64 encode & callback ──
-            const bytes = new Uint8Array(int16.buffer);
-            let b = '';
-            // Chunked to avoid call stack overflow on large buffers
-            for (let i = 0; i < bytes.length; i += 8192) {
-              b += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
-            }
-            try { this._onChunk(btoa(b)); } catch(_) {}
-          };
-
-          source.connect(this._processor);
-          this._processor.connect(this._micCtx.destination);
-          console.log('[CuisineeAudio] Mic started — native=' + nativeRate + 'Hz → 16000Hz');
-          return true;
-        } catch (err) {
-          console.error('[CuisineeAudio] Mic start error:', err);
-          return false;
+      async resumePlayback() {
+        if (this._playCtx && this._playCtx.state === 'suspended') {
+          try { await this._playCtx.resume(); } catch(_) {}
         }
-      },
-
-      stopMic() {
-        if (this._processor)  { this._processor.disconnect();  this._processor  = null; }
-        if (this._micStream)  { this._micStream.getTracks().forEach(t => t.stop()); this._micStream = null; }
-        if (this._micCtx)     { this._micCtx.close();           this._micCtx     = null; }
-        this._onChunk  = null;
-        this._onSpeech = null;
-        console.log('[CuisineeAudio] Mic stopped');
-      },
-
-      // ── Playback ────────────────────────────────────────────────────────
-      // Receive a stream of PCM-16bit 24 kHz base64 chunks and play them
-      // gaplessly using scheduled AudioBufferSourceNodes.
-      playPcmChunk(base64) {
-        if (this._interrupted) return;
-
-        // Lazy-create / resume playback context at 24 kHz
-        if (!this._playCtx || this._playCtx.state === 'closed') {
-          this._playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
-          this._playTime = 0;
-        }
-        if (this._playCtx.state === 'suspended') this._playCtx.resume();
-
-        try {
-          // Decode base64 → bytes → Int16 → Float32
-          const bin  = atob(base64);
-          const u8   = new Uint8Array(bin.length);
-          for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-
-          const int16   = new Int16Array(u8.buffer);
-          const float32 = new Float32Array(int16.length);
-          for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768.0;
-
-          const audioBuf = this._playCtx.createBuffer(1, float32.length, 24000);
-          audioBuf.copyToChannel(float32, 0);
-
-          const src = this._playCtx.createBufferSource();
-          src.buffer = audioBuf;
-          src.connect(this._playCtx.destination);
-
-          // Schedule gaplessly: if playback has fallen behind, restart from now+20ms
-          const now   = this._playCtx.currentTime;
-          const start = (this._playTime < now + 0.01) ? now + 0.02 : this._playTime;
-          src.start(start);
-          this._playTime = start + audioBuf.duration;
-          this._isSpeaking = true;
-
-          // Reset silence timer
-          if (this._silenceTimer) clearTimeout(this._silenceTimer);
-          this._silenceTimer = setTimeout(() => {
-            if (!this._playCtx) return;
-            if (this._playTime <= this._playCtx.currentTime + 0.05) {
-              this._isSpeaking = false;
-            }
-          }, Math.ceil((audioBuf.duration + 0.2) * 1000));
-
-        } catch (err) {
-          console.error('[CuisineeAudio] Playback error:', err);
-        }
-      },
-
-      // Stop AI audio immediately (barge-in)
-      interrupt() {
-        this._interrupted = true;
-        this._isSpeaking  = false;
-        this._playTime    = 0;
-        if (this._playCtx) {
-          try { this._playCtx.close(); } catch(_) {}
-          this._playCtx = null;
-        }
-        // Re-enable after 400ms so new AI audio can play
-        setTimeout(() => { this._interrupted = false; }, 400);
-      },
-
-      isSpeaking() {
-        if (!this._playCtx) return false;
-        return this._isSpeaking && (this._playTime > this._playCtx.currentTime + 0.05);
-      },
-
-      // Resume AudioContext (required after user gesture on iOS/Chrome)
-      resumePlayback() {
-        if (this._playCtx && this._playCtx.state === 'suspended') this._playCtx.resume();
       }
     };
   </script>

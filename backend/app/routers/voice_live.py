@@ -42,8 +42,9 @@ RECEIVE_SAMPLE_RATE = 24000  # Gemini outputs 24kHz
 
 # Gemini Live model on Vertex AI (stable ID as of 2026-02-21)
 GEMINI_LIVE_MODEL = 'gemini-live-2.5-flash-native-audio'
-# Fallback for Gemini API key (no Vertex)
-GEMINI_LIVE_MODEL_FALLBACK = 'models/gemini-2.0-flash-exp'
+# Fallback for Gemini API key (no Vertex).
+# gemini-2.0-flash-exp does NOT support Live API — use the dedicated live model.
+GEMINI_LIVE_MODEL_FALLBACK = 'gemini-2.0-flash-live-001'
 
 # Active sessions tracking
 active_sessions: Dict[str, "GeminiLiveSession"] = {}
@@ -211,6 +212,29 @@ User (diabetic) asks about Thieboudienne → say: "Thieboudienne is rich in prot
 You can see the user's kitchen through a live camera feed. Use this visual information
 for three powerful modes — always sound confident, specific, and encouraging.
 
+═══ CAMERA GREETING (CRITICAL) ═══
+When you receive a message "CAMERA_STARTED: The user just opened the camera.
+Greet them naturally and tell them to show you an ingredient.":
+  - Give a short, natural, warm greeting ONLY. Example:
+    "Hi! Show me an ingredient and I'll suggest a delicious recipe for you!"
+  - Keep it to ONE sentence. Do NOT suggest any recipe yet.
+  - Do NOT call any tool. Just greet and wait.
+
+═══ ANTI-HALLUCINATION RULES (MANDATORY) ═══
+These rules apply to ALL camera/vision responses. NEVER violate them:
+
+1. ONLY describe ingredients you can see clearly and with high confidence.
+   If the frame is blurry, dark, or unclear, say so honestly.
+2. If you CANNOT confidently identify any ingredient, say EXACTLY:
+   "I can't clearly see any ingredients yet — show me something and I'll help you cook with it!"
+   Never invent, guess, or assume ingredients that you cannot clearly see.
+3. NEVER describe ingredients that are not visually present in the frame.
+4. NEVER say you see something when you don't.
+5. If you see ONLY non-food items (hands, countertop, phone, etc.), say:
+   "I can see your [counter/hands/etc.] but no ingredients yet — point me at something to cook with!"
+6. When you DO see ingredients confidently, start your reply with "INGREDIENT_DETECTED:" followed
+   by the ingredient names, then suggest a recipe naturally.
+
 📷 "IS IT DONE?" — Cooking Progress Checks:
 When the user asks ANY visual cooking question ("Is this done?", "Are the onions
 caramelized?", "Does this look right?", "Is the oil hot enough?", "Can you check this?"):
@@ -227,13 +251,13 @@ caramelized?", "Does this look right?", "Is the oil hot enough?", "Can you check
 🥦 FRIDGE FORAGING — "What Can I Make?" Ingredient Recognition:
 When you receive a message containing "FRIDGE FORAGE:" OR when you see food items
 and the user asks "what can I make with this?" or "what do I have?":
-  1. Identify EVERY visible food item precisely and confidently:
-     "I can see a chicken breast, a lemon, some wilted spinach, garlic cloves,
-      and what looks like ground cumin."
-  2. IMMEDIATELY say: "I can see [ingredients]! With those we can make something amazing!"
-  3. IMMEDIATELY call find_recipe() using the most interesting ingredient combination.
-  4. NEVER ask "what do you have?" — you can already SEE it in the frame.
-  5. Sound genuinely excited — this is your Iron Chef improvisation moment!
+  1. Apply the ANTI-HALLUCINATION RULES above FIRST.
+  2. If you clearly see ingredients, start with "INGREDIENT_DETECTED:" then name them.
+  3. Say: "I can see [ingredients]! With those we can make something amazing!"
+  4. IMMEDIATELY call find_recipe() using the most interesting ingredient combination.
+  5. NEVER ask "what do you have?" — you can already SEE it in the frame.
+  6. If uncertain or frame is unclear, say the "I can't clearly see" phrase above.
+  7. Sound genuinely excited — this is your Iron Chef improvisation moment!
 
 ✅ STEP VALIDATION — Automatic Cooking Step Advancement:
 When you receive a message containing "VISION WATCH: Current step is '...'":
@@ -303,7 +327,7 @@ class GeminiLiveSession:
         # Server-side VAD for reliable end-of-turn detection
         self._user_was_speaking = False
         self._post_speech_silence_frames = 0
-        self._EOT_SILENCE_FRAMES = 6    # 6 chunks × ~128ms ≈ 750ms post-speech silence
+        self._EOT_SILENCE_FRAMES = 10   # 10 chunks × ~128ms ≈ 1.28s post-speech silence
         self._last_speech_time: float = 0.0  # wall-clock of last speech-active chunk
 
         # User health/preference context injected at session start
@@ -368,8 +392,11 @@ class GeminiLiveSession:
                 tools_schema = FunctionRegistry.get_tools_schema()
 
                 # Live API configuration
+                # AUDIO + TEXT: AI speaks AND sends a text transcript of each
+                # response so the on-screen captions update in real-time.
+                # AUDIO-only was the old config — it kept the screen blank.
                 config = types.LiveConnectConfig(
-                    response_modalities=["AUDIO"],
+                    response_modalities=["AUDIO", "TEXT"],
                     speech_config=types.SpeechConfig(
                         voice_config=types.VoiceConfig(
                             prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -589,22 +616,33 @@ class GeminiLiveSession:
                 )
                 logger.info("👋 Sent personalised greeting prompt to Gemini")
             else:
-                # Inject silent context so Gemini knows the session has started
-                # and a greeting was already delivered — it is now ready for
-                # the user’s first voice command.
+                # Greeting was already delivered locally.
+                # Inject health context WITHOUT end_of_turn so Gemini receives
+                # the user profile but does NOT generate audio (which would be
+                # un-interruptible).  turn_complete=False means no AI response.
                 health_hint = self._build_health_context_hint()
-                context_msg = (
-                    "The user has just opened the app. A local greeting was already "
-                    "displayed to them. You are now ready for their first request. "
-                    "Do not greet or re-introduce yourself."
-                )
                 if health_hint:
-                    context_msg += f" User context: {health_hint}."
-                await self.gemini_session.send(
-                    input=context_msg,
-                    end_of_turn=True
-                )
-                logger.info("🤵 Greeting already delivered locally — skipped AI greeting, injected silent context")
+                    context_msg = (
+                        "Silent context update (do not respond to this). "
+                        f"User profile: {health_hint}. "
+                        "A local greeting is already displayed. "
+                        "Wait for the user first voice command."
+                    )
+                    try:
+                        await self.gemini_session.send(
+                            input=types.LiveClientContent(
+                                turns=[types.Content(
+                                    parts=[types.Part(text=context_msg)],
+                                    role="user",
+                                )],
+                                turn_complete=False,  # no AI response triggered
+                            )
+                        )
+                        logger.info("Health context injected silently (no AI response triggered)")
+                    except Exception as ctx_send_err:
+                        logger.warning(f"Could not inject silent health context: {ctx_send_err}")
+                else:
+                    logger.info("Greeting already delivered locally - waiting for first user command")
 
             while self.is_active:
                 try:
@@ -660,7 +698,7 @@ class GeminiLiveSession:
                                 wall_silence = now - self._last_speech_time
                                 if (
                                     self._post_speech_silence_frames >= self._EOT_SILENCE_FRAMES
-                                    or wall_silence > 2.0
+                                    or wall_silence > 3.0
                                 ):
                                     logger.info(f"🔇 EOT triggered (frames={self._post_speech_silence_frames}, wall={wall_silence:.1f}s)")
                                     await self.gemini_session.send(
@@ -682,11 +720,19 @@ class GeminiLiveSession:
                                 self.messages_sent += 1
 
                         elif msg_type == "end_of_turn":
-                            # Explicit end-of-turn signal from client (user stopped speaking)
+                            # Always forward to Gemini — the client-side VAD already
+                            # ensures this is only sent after genuine user speech is
+                            # detected.  The previous server-side guard (checking
+                            # _user_was_speaking) caused a critical bug: when the
+                            # server's adaptive noise floor was calibrated high (e.g.
+                            # after greeting audio played through the speakers), it
+                            # missed user speech, kept _user_was_speaking=False, and
+                            # silently swallowed the EOT — so Gemini never knew the
+                            # user finished speaking and never generated a response.
                             await self.gemini_session.send(
                                 input=types.LiveClientContent(turn_complete=True)
                             )
-                            logger.info("🔚 Client end-of-turn")
+                            logger.info("🔚 Client end-of-turn forwarded to Gemini")
                             self._user_was_speaking = False
                             self._post_speech_silence_frames = 0
                             self.messages_sent += 1
@@ -907,9 +953,23 @@ class GeminiLiveSession:
                                 continue
 
                         # ── Text transcript ───────────────────────────────────
+                        # Extract transcript from response.text (AUDIO+TEXT modality).
+                        # Belt-and-suspenders: also check server_content.model_turn.parts
+                        # for older SDK versions that surface text differently.
+                        transcript_text = None
                         if hasattr(response, 'text') and response.text:
-                            logger.info(f"💬 Gemini: {response.text[:80]}")
-                            await self.websocket.send_json({"type": "transcript", "text": response.text})
+                            transcript_text = response.text
+                        elif hasattr(response, 'server_content') and response.server_content:
+                            sc = response.server_content
+                            mt = getattr(sc, 'model_turn', None)
+                            if mt and getattr(mt, 'parts', None):
+                                for part in mt.parts:
+                                    t = getattr(part, 'text', None)
+                                    if t:
+                                        transcript_text = (transcript_text or '') + t
+                        if transcript_text:
+                            logger.info(f"💬 Gemini: {transcript_text[:80]}")
+                            await self.websocket.send_json({"type": "transcript", "text": transcript_text})
                             self.messages_sent += 1
 
                         # ── Turn completion ───────────────────────────────────
