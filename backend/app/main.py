@@ -10,7 +10,7 @@ from starlette.responses import Response
 
 from .config import get_settings, bootstrap_gcp_credentials
 from .database import engine, Base
-from .routers import auth, recipes, users, chat, voice_live, vision
+from .routers import auth, recipes, users, chat, voice_live, vision, global_recipes
 
 # ── Bootstrap GCP credentials FIRST (before any client is created) ───────────
 settings = get_settings()
@@ -75,6 +75,7 @@ app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(chat.router, prefix="/api/chat", tags=["AI Chat"])
 app.include_router(voice_live.router, prefix="/api", tags=["Voice Assistant"])
 app.include_router(vision.router, prefix="/api", tags=["Vision AI"])
+app.include_router(global_recipes.router, prefix="/api/recipes/global", tags=["Global Recipes"])
 
 # Mount static files for serving AI-generated recipe images
 static_path = Path(__file__).parent.parent / "static"

@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     # Google Custom Search API (for recipe images)
     search_api: str = ""  # Google Custom Search API key
     search_engine_id: str = ""  # Custom Search Engine ID (cx)
+
+    # Spoonacular (global recipe search)
+    spoonacular_api_key: str = ""
     
     @property
     def cors_origins(self) -> list[str]:
