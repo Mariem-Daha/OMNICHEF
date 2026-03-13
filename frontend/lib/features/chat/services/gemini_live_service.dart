@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 // GEMINI LIVE SERVICE - Real-time Bidirectional Audio Streaming
 // ============================================================================
 // WebSocket-based voice assistant using Gemini Live API
@@ -15,7 +15,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, VoidCallback;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'audio_recorder/base_recorder.dart';
@@ -67,6 +67,9 @@ class GeminiLiveService {
   final BytesBuilder _audioBuffer = BytesBuilder();
   int? _currentTurnSampleRate;
   bool _isSpeaking = false;
+  // Set to true by sendInterrupt(); prevents a queued _playBufferedAudio() from
+  // restarting speech after an in-flight barge-in during the processing phase.
+  bool _interruptPending = false;
   
   // Connection health
   Timer? _heartbeatTimer;
@@ -76,14 +79,16 @@ class GeminiLiveService {
   bool _vadSpeechDetected = false;       // true once the user starts speaking
   DateTime? _vadLastSpeechTime;          // wall-clock of last loud chunk
   Timer? _vadSilenceTimer;               // fires end_of_turn after silence
+  Timer? _maxListenTimer;                // auto-closes mic if no speech in 10 s
   // RMS energy threshold (0-1 normalised).
   // 0.015 is high enough to reject acoustic echo from speakers and
   // background hiss while still catching conversational speech.
   static const double _vadEnergyThreshold = 0.015;
   // How long silence must last (after speech detected) before we end the turn.
-  // 650ms feels natural — long enough not to cut mid-sentence, fast enough to
-  // feel responsive.
-  static const Duration _vadSilenceDuration = Duration(milliseconds: 650);
+  // 1200 ms covers natural mid-sentence pauses and thinking gaps (200–900 ms)
+  // without making the assistant feel sluggish. Below ~700 ms the user's
+  // mid-thought pauses trigger premature EOT and cut off their sentence.
+  static const Duration _vadSilenceDuration = Duration(milliseconds: 1200);
 
   // ── Adaptive noise floor ─────────────────────────────────────────────────
   // Tracks the ambient noise level and raises the effective VAD threshold so
@@ -91,9 +96,9 @@ class GeminiLiveService {
   // *quiet* chunks (below current threshold) using a slow EMA (α = 0.02).
   double _adaptiveNoiseFloor = 0.003;
   static const double _noiseFloorAlpha = 0.02;   // EMA smoothing factor
-  // Raised from 2.5 → 4.0: requires signal to be 4× above ambient noise floor.
-  // Prevents speaker echo being mistaken for user speech.
-  static const double _noiseFloorHeadroom = 4.0;
+  // 6× above ambient noise floor — prevents speaker echo / room noise from
+  // being mistaken for user speech and causing false barge-ins.
+  static const double _noiseFloorHeadroom = 6.0;
   DateTime? _lastPongTime;
   int _reconnectAttempts = 0;
   static const int maxReconnectAttempts = 3;
@@ -107,6 +112,14 @@ class GeminiLiveService {
   Function(Map<String, dynamic>)? onVADMetrics;  // Voice Activity Detection metrics
   Function(Uint8List, int)? onAudioReadyToPlay;  // Audio data ready for UI thread playback
   Function(double)? onAmplitudeChanged;           // Real-time mic RMS 0.0–1.0 for visualizer
+
+  // ── Real-time streaming (web) ──────────────────────────────────────────
+  // Called for each raw PCM audio chunk as it arrives from Gemini.
+  // On web, this streams chunks directly to the Web Audio API for gapless
+  // playback without buffering, eliminating dead air and sentence cuts.
+  Function(String base64Pcm, int sampleRate)? onStreamAudioChunk;
+  // Called when turn_complete fires — signals all audio for this turn has been sent.
+  VoidCallback? onTurnPlaybackDone;
 
   // Latency tracking
   double _currentLatencyMs = 0.0;
@@ -318,6 +331,12 @@ class GeminiLiveService {
     }
     
     _stopHeartbeat();
+
+    // Cancel VAD timers
+    _vadSilenceTimer?.cancel();
+    _vadSilenceTimer = null;
+    _maxListenTimer?.cancel();
+    _maxListenTimer = null;
     
     try {
       await _audioChunkSubscription?.cancel();
@@ -349,6 +368,7 @@ class GeminiLiveService {
     _lastPongTime = null;
     _isSpeaking = false;
     _isStreaming = false;
+    _interruptPending = false;  // Reset so stale interrupt from previous session doesn't drop first audio
     _setState(LiveState.disconnected);
   }
 
@@ -370,15 +390,37 @@ class GeminiLiveService {
           break;
 
         case 'audio':
-          // First audio chunk from Gemini → switch to processing/thinking state
-          if (_state == LiveState.listening || _state == LiveState.connected) {
-            _setState(LiveState.processing);
+          // Discard stale audio chunks that arrive after a barge-in.
+          if (_interruptPending) break;
+          // If mic is already open (after seamless barge-in), drop server audio
+          // so state never flips back to speaking and breaks the transition.
+          if (_state == LiveState.listening) break;
+
+          if (onStreamAudioChunk != null) {
+            // Streaming mode (web): enter speaking on the FIRST chunk.
+            // Must also handle the processing state, which is set by
+            // ai_generating BEFORE audio arrives — without this the state
+            // never transitions to speaking and turn_complete is dropped.
+            if (_state != LiveState.speaking) {
+              _setState(LiveState.speaking);
+              _isSpeaking = true;
+              _startBargeInMonitoring();
+            }
+          } else {
+            // Buffer mode (native): enter processing from idle states only.
+            if (_state == LiveState.listening || _state == LiveState.connected) {
+              _setState(LiveState.processing);
+            }
           }
           _handleAudioResponse(data);
           break;
 
         case 'ai_generating':
-          // Gemini has started generating — show "Thinking..."
+          // Gemini has started generating a NEW response — allow audio through.
+          // This is the only safe point to clear _interruptPending after a
+          // seamless barge-in: the old interrupted turn is fully done and
+          // Gemini is now responding to the user's new utterance.
+          _interruptPending = false;
           if (_state != LiveState.speaking) {
             _setState(LiveState.processing);
           }
@@ -402,18 +444,60 @@ class GeminiLiveService {
           break;
 
       case 'turn_complete':
-        print('✅ Turn complete - flushing audio buffer in 200ms');
-        // Brief flush delay: allows any in-flight audio chunks that arrived
-        // just before turn_complete to land in the buffer before we play,
-        // preventing mid-sentence cut-offs caused by network reordering.
-        await Future.delayed(const Duration(milliseconds: 200));
-        await _playBufferedAudio();
-        // State will be set to speaking by _playBufferedAudio.
-        // Auto-start mic is triggered in onAudioPlaybackComplete() below.
+        if (onStreamAudioChunk != null) {
+          // Streaming mode (web): all chunks were already sent to playback.
+          // Only signal completion if we're actually speaking (not interrupted).
+          if (_state == LiveState.speaking && !_interruptPending) {
+            print('✅ Turn complete (streaming mode)');
+            onTurnPlaybackDone?.call();
+          } else if (_state == LiveState.processing && !_interruptPending) {
+            // Silent turn: function call with no audio output.
+            // The AI executed a tool but chose not to speak — reopen the mic.
+            print('✅ Turn complete (silent turn — function call with no audio)');
+            _setState(LiveState.connected);
+            if (isConnected) {
+              Future.delayed(const Duration(milliseconds: 400), () {
+                if (isConnected && _state == LiveState.connected) startListening();
+              });
+            }
+          } else if (_state == LiveState.connected && !_interruptPending) {
+            // Edge case: state already moved to connected (e.g. very short
+            // response that finished before turn_complete arrived). Reopen mic.
+            print('✅ Turn complete (already connected — reopening mic)');
+            Future.delayed(const Duration(milliseconds: 400), () {
+              if (isConnected && _state == LiveState.connected) startListening();
+            });
+          } else {
+            print('✅ Turn complete (skipped — state: ${_state.name}, interrupted: $_interruptPending)');
+            // Do NOT clear _interruptPending while in listening state (barge-in
+            // in progress).  The interrupted turn's turn_complete arrives here
+            // while the user is still speaking; clearing early lets stale audio
+            // from the old turn resume once state transitions to processing.
+            // _interruptPending is cleared by 'ai_generating' on web, or by
+            // _playBufferedAudio() on native when the old TC fires.
+            if (_state != LiveState.listening) {
+              _interruptPending = false;
+            }
+          }
+        } else {
+          // Buffer mode (native): play accumulated audio. Small delay for any
+          // TCP-reordered chunks to arrive (WebSocket is ordered, so 100ms is
+          // more than enough; the old 800ms caused noticeable dead air).
+          print('✅ Turn complete - playing buffered audio');
+          await Future.delayed(const Duration(milliseconds: 100));
+          await _playBufferedAudio();
+        }
         break;
 
       case 'interrupted':
-        // Gemini's own barge-in signal — stop playback and clear buffer immediately
+        // Gemini's own barge-in signal — stop playback and clear buffer.
+        // If the client already handled the interrupt (mic is already open and
+        // streaming) do nothing: resetting state here would stop the active
+        // recording mid-sentence and cause the user's words to be lost.
+        if (_state == LiveState.listening) {
+          print('⚡ Gemini interrupted — client already listening, skipping state reset');
+          break;
+        }
         print('⚡ Gemini interrupted — clearing audio buffer and resuming mic');
         await stopAudioPlayback();
         _isSpeaking = false;
@@ -465,6 +549,8 @@ class GeminiLiveService {
     _clearAudioBuffer();
     _vadSilenceTimer?.cancel();
     _vadSilenceTimer = null;
+    _maxListenTimer?.cancel();
+    _maxListenTimer = null;
     final wasConnected = _channel != null;
     _wsSubscription = null;
     _channel = null;
@@ -570,8 +656,14 @@ class GeminiLiveService {
       if (audioBytes.isEmpty) return;
 
       if (mimeType.contains('pcm')) {
-        _audioBuffer.add(audioBytes);
-        _currentTurnSampleRate = sampleRate;
+        if (onStreamAudioChunk != null) {
+          // Streaming mode: send each chunk directly to playback
+          onStreamAudioChunk!(audioBase64!, sampleRate);
+        } else {
+          // Buffer mode: accumulate for later playback
+          _audioBuffer.add(audioBytes);
+          _currentTurnSampleRate = sampleRate;
+        }
       }
     } catch (e) {
       print('❌ Error handling audio: $e');
@@ -584,11 +676,23 @@ class GeminiLiveService {
 
   /// Play buffered audio when turn is complete
   Future<void> _playBufferedAudio() async {
+    // Guard: a barge-in was requested while the audio was still buffering.
+    // Skip playback entirely so the user's voice input is not stomped.
+    if (_interruptPending) {
+      _interruptPending = false;
+      _audioBuffer.clear();
+      print('⏩ Skipping buffered audio — barge-in was requested during buffering');
+      return;
+    }
+
     if (_audioBuffer.isEmpty) {
       print('⚠️ Audio buffer is empty, nothing to play — auto-starting mic');
-      _setState(LiveState.connected);
-      // No audio this turn — still auto-start listening
-      if (isConnected) startListening();
+      // Guard: do not change state if the user is already listening (e.g. after
+      // a barge-in that called startListening() before this future fired).
+      if (_state != LiveState.listening) {
+        _setState(LiveState.connected);
+        if (isConnected) startListening();
+      }
       return;
     }
 
@@ -635,11 +739,14 @@ class GeminiLiveService {
       print('🔄 DEBUG: State changed to connected after audio playback');
     }
 
-    // Brief "breath" pause before picking up the mic — feels more human and
-    // avoids the mic catching the tail echo of the last AI audio frame.
+    // Brief "breath" pause before picking up the mic — feels more human,
+    // avoids the mic catching the tail echo/reverb of the last AI audio frame,
+    // and gives the OS audio session time to flush its hardware buffer.
+    // 800 ms covers typical room reverb tails (200–500 ms) with extra margin.
     if (isConnected && _state == LiveState.connected) {
-      print('🎤 Auto-starting mic in 300ms (natural breath pause)...');
-      Future.delayed(const Duration(milliseconds: 300), () {
+      print('🎤 Auto-starting mic in 800ms (reverb drain pause)...');
+      Future.delayed(const Duration(milliseconds: 800), () {
+        // Guard: if a barge-in already activated the mic, don't double-start.
         if (isConnected && _state == LiveState.connected) {
           startListening();
         }
@@ -737,6 +844,7 @@ class GeminiLiveService {
     }
 
     print('✅ All checks passed - starting recorder...');
+    _interruptPending = false;  // Clear stale interrupt flag for new turn
 
     await _ensureRecorderStopped();
 
@@ -777,10 +885,23 @@ class GeminiLiveService {
     try {
       print('🛑 Stopping audio streaming...');
 
+      // Any stale audio from an interrupted turn has already been drained
+      // during the listening window (typically 2–10 s). It is now safe to
+      // unblock the pipeline so the new Gemini response can play.
+      // Only clear if we're in listening (not processing) to avoid clearing
+      // a freshly-set interrupt from a race condition.
+      if (_state == LiveState.listening) {
+        _interruptPending = false;
+      }
+
       // Cancel client-side VAD timer
       _vadSilenceTimer?.cancel();
       _vadSilenceTimer = null;
       _vadSpeechDetected = false;
+
+      // Cancel max-listen safety timer
+      _maxListenTimer?.cancel();
+      _maxListenTimer = null;
 
       _isStreaming = false;
       _audioStreamTimer?.cancel();
@@ -810,9 +931,32 @@ class GeminiLiveService {
     _vadLastSpeechTime = null;
     _vadSilenceTimer?.cancel();
     _vadSilenceTimer = null;
-    // Reset adaptive noise floor estimate so each turn re-calibrates to the
-    // current acoustic environment (e.g. user moved to a louder room).
-    _adaptiveNoiseFloor = 0.003;
+    // Do NOT reset _adaptiveNoiseFloor — keep the calibrated ambient noise
+    // estimate from the previous turn.  Resetting to 0.003 caused the tail
+    // echo of the AI's just-finished speech to read above that floor and
+    // be mistaken as user speech, triggering false EOT / echo loops.
+    // The EMA will naturally track room-level changes within a few seconds.
+
+    // ── Max-listen safety timer ──────────────────────────────────────────────
+    // If the user opens the mic but never speaks (e.g. after a false barge-in
+    // reset), the VAD silence timer never fires because it only starts AFTER
+    // speech is first detected. This 10-second fallback moves the state back
+    // to "connected" (ready) so the UI doesn't stay stuck in "Listening..."
+    // indefinitely. No end_of_turn is sent so Gemini isn't disturbed.
+    _maxListenTimer?.cancel();
+    _maxListenTimer = Timer(const Duration(seconds: 10), () {
+      if (_isStreaming && !_vadSpeechDetected && isConnected) {
+        print('⏰ Max-listen timeout: no speech in 10 s — silently resetting to ready');
+        _maxListenTimer = null;
+        _isStreaming = false;
+        _vadSilenceTimer?.cancel();
+        _vadSilenceTimer = null;
+        _audioChunkSubscription?.cancel();
+        _audioChunkSubscription = null;
+        _recorder?.stopRecording();
+        _setState(LiveState.connected);
+      }
+    });
 
     _audioChunkSubscription = _recorder!.audioChunkStream?.listen((chunk) {
       if (!_isStreaming || !isConnected) return;
@@ -834,23 +978,29 @@ class GeminiLiveService {
       final isSpeech = rms > effectiveThreshold;
 
       if (isSpeech) {
-        // Loud chunk — user is speaking
+        // Loud chunk — user is speaking.
+        _maxListenTimer?.cancel();
+        _maxListenTimer = null;
         _vadSpeechDetected = true;
         _vadLastSpeechTime = DateTime.now();
-        // Cancel any pending silence timer so we don’t cut in mid-sentence
+        // Cancel any pending silence timer so we don't cut in mid-sentence
         _vadSilenceTimer?.cancel();
-        _vadSilenceTimer = null;        // ── Auto barge-in: if AI is currently speaking, interrupt it ─────
-        if (_state == LiveState.speaking) {
-          sendInterrupt();
-        }      } else if (_vadSpeechDetected) {
+        _vadSilenceTimer = null;
+        // NOTE: barge-in while AI is speaking is handled exclusively by
+        // _startBargeInMonitoring() which requires consecutive loud chunks.
+        // Do NOT call sendInterrupt() here — that has no echo protection and
+        // is the primary cause of the AI cutting its own sentences on echo.
+      } else if (_vadSpeechDetected) {
         // Quiet chunk after speech — start (or keep) the silence countdown
         _vadSilenceTimer ??= Timer(_vadSilenceDuration, () {
           print('🔇 Client VAD: ${_vadSilenceDuration.inMilliseconds}ms silence → end_of_turn');
           _vadSpeechDetected = false;
           _vadSilenceTimer = null;
-          // Send end_of_turn signal; stopListening() will stop the mic
+          // stopListening() sends end_of_turn internally — do NOT call
+          // _sendEndOfTurn() here too or two EOT messages are sent back-to-back.
+          // The backend's dedup resets after the first, letting the second
+          // through which causes Gemini to respond twice (repeat bug).
           if (_isStreaming && isConnected) {
-            _sendEndOfTurn();
             stopListening();
           }
         });
@@ -900,85 +1050,196 @@ class GeminiLiveService {
   // BARGE-IN MONITORING (mic monitoring while AI speaks)
   // =========================================================================
 
-  /// Start recording in a lightweight monitoring mode while the AI is speaking.
+  /// Start recording in a lightweight monitoring mode while the AI is speaking
+  /// (or buffering audio in [processing] state).
   /// When user voice is detected above the threshold the AI is interrupted
   /// automatically without needing any UI tap.
-  void _startBargeInMonitoring() async {
+  ///
+  /// [isPrePlayback] — pass `true` when starting BEFORE audio begins playing
+  /// (i.e. during the processing/buffering phase). This disables the startup
+  /// delay that normally guards against speaker echo, because at that point
+  /// the speakers are completely silent.
+  void _startBargeInMonitoring({bool isPrePlayback = false}) async {
     if (_recorder == null) return;
-    if (_recorder!.isRecording()) return;  // recorder already active
 
-    try {
-      final config = RecordingConfig(
-        sampleRate: _sendSampleRate,
-        numChannels: 1,
-        maxDuration: const Duration(minutes: 5),
-      );
+    // KEY FIX: If the recorder is still active from the listening phase
+    // (race window — AI response arrived before the 1200 ms VAD timer fired),
+    // do NOT return early.  Instead, take ownership of the stream:
+    //   • cancel the listening subscription (stops false-EOT detection)
+    //   • keep the recorder running — no stop/start gap
+    //   • subscribe the barge-in listener to the same stream
+    final alreadyRecording = _recorder!.isRecording();
+    if (alreadyRecording) {
+      // Hand off: silence the listening pipeline, reuse the recorder.
+      _isStreaming = false;        // prevents VAD timer from sending EOT
+      _vadSpeechDetected = false;
+      _vadSilenceTimer?.cancel();
+      _vadSilenceTimer = null;
+      _maxListenTimer?.cancel();
+      _maxListenTimer = null;
+      await _audioChunkSubscription?.cancel();
+      _audioChunkSubscription = null;
+      print('🎤 Barge-in: taking ownership of active recorder (race-window handoff)');
+    } else {
+      // Normal path: start a fresh recording session for barge-in.
+      try {
+        final config = RecordingConfig(
+          sampleRate: _sendSampleRate,
+          numChannels: 1,
+          maxDuration: const Duration(minutes: 5),
+        );
+        final started = await _recorder!.startRecording(config);
+        if (!started) {
+          print('⚠️ Barge-in monitoring: could not start microphone');
+          return;
+        }
+      } catch (e) {
+        print('⚠️ Error starting barge-in monitoring: $e');
+        return;
+      }
+    }
 
-      final started = await _recorder!.startRecording(config);
-      if (!started) {
-        print('⚠️ Barge-in monitoring: could not start microphone');
+    print('🎤 Barge-in monitoring active (prePlayback=$isPrePlayback)');
+
+    // Barge-in threshold: 2.5× the effective noise floor.
+    // Residual AEC echo is typically 0.02–0.05 RMS; human speech 0.08–0.40.
+    // 2.5× ambient floor catches normal conversational speech while still
+    // rejecting echo transients, which are typically below 2× the floor.
+    final bargeInThreshold = math.max(
+      _vadEnergyThreshold,
+      _adaptiveNoiseFloor * _noiseFloorHeadroom,
+    ) * 3.5;
+
+    // Startup delay: skip chunks during AEC convergence.
+    // • isPrePlayback=true  → 120 ms (speakers silent, hardware settling only)
+    // • isPrePlayback=false → 200 ms (browser AEC converges within ~200 ms)
+    // Keeping this short is critical for perceived interruptibility.
+    final startupDelay = isPrePlayback
+        ? const Duration(milliseconds: 200)
+        : const Duration(milliseconds: 400);
+    final monitoringStart = DateTime.now();
+
+    // Require 2 consecutive loud chunks before triggering barge-in.
+    // At ~80–130 ms/chunk → 160–260 ms to confirm speech — fast enough to feel
+    // immediate while still rejecting single-chunk noise spikes.
+    int consecutiveLoudChunks = 0;
+    const requiredConsecutiveChunks = 3;
+
+    // Rolling buffer of recent chunks — replayed to server after barge-in so
+    // Gemini hears the words that triggered the interruption.  The listener
+    // only measures RMS and does NOT forward chunks, so without this buffer
+    // a short interruption word ("stop", "wait") would be entirely lost and
+    // Gemini would respond to silence (or not respond at all).
+    final List<Uint8List> recentChunkBuffer = [];
+    const int maxBufferedChunks = 12; // ~1 second of audio coverage
+
+    _bargeInSubscription = _recorder!.audioChunkStream?.listen((chunk) {
+      // Allow interruption during both speaking AND processing (buffering) states.
+      if ((_state != LiveState.speaking && _state != LiveState.processing) ||
+          !isConnected) {
+        _stopBargeInMonitoring();
         return;
       }
 
-      print('🎤 Barge-in monitoring active');
+      // Skip chunks during the startup delay window
+      if (DateTime.now().difference(monitoringStart) < startupDelay) return;
 
-      // Use a higher RMS threshold than normal VAD to avoid false triggers
-      // from acoustic echo (AI's own speaker audio bleeding into the microphone).
-      // 6.0× the effective threshold — requires genuine loud speech to interrupt.
-      final bargeInThreshold = math.max(
-        _vadEnergyThreshold,
-        _adaptiveNoiseFloor * _noiseFloorHeadroom,
-      ) * 6.0;
+      // Keep a rolling window of the most recent chunks for post-barge-in replay
+      recentChunkBuffer.add(chunk);
+      if (recentChunkBuffer.length > maxBufferedChunks) {
+        recentChunkBuffer.removeAt(0);
+      }
 
-      // Small startup delay: skip the first 600ms of chunks so the initial
-      // burst of AI audio (which the mic picks up as echo) is not mis-detected
-      // as user speech.
-      final monitoringStart = DateTime.now();
-      const startupDelay = Duration(milliseconds: 600);
+      final rms = _computeChunkRMS(chunk);
+      onAmplitudeChanged?.call(rms.clamp(0.0, 1.0));
 
-      // Consecutive loud-chunk counter: require 3 chunks above threshold
-      // before triggering barge-in, preventing a single clap/breath/echo
-      // from killing the AI mid-sentence.
-      int consecutiveLoudChunks = 0;
-      const requiredConsecutiveChunks = 3;
-
-      _bargeInSubscription = _recorder!.audioChunkStream?.listen((chunk) {
-        if (_state != LiveState.speaking || !isConnected) {
-          _stopBargeInMonitoring();
-          return;
+      if (rms > bargeInThreshold) {
+        consecutiveLoudChunks++;
+        if (consecutiveLoudChunks >= requiredConsecutiveChunks) {
+          print('⚡ Auto barge-in: $consecutiveLoudChunks consecutive loud chunks (RMS: ${rms.toStringAsFixed(3)}, floor: ${bargeInThreshold.toStringAsFixed(3)})');
+          // cancel() has immediate sync effect on event delivery even though
+          // it returns a Future — safe to call without await inside a listener.
+          // We keep the recorder running (no stop) to avoid an audio gap.
+          final capturedChunks = List<Uint8List>.from(recentChunkBuffer);
+          _bargeInSubscription?.cancel();
+          _bargeInSubscription = null;
+          _seamlessBargeinTransition(capturedChunks: capturedChunks);
         }
+      } else {
+        // Reset counter on any quiet chunk — must be continuously loud
+        consecutiveLoudChunks = 0;
+      }
+    });
+  }
 
-        // Skip chunks during the startup delay window
-        if (DateTime.now().difference(monitoringStart) < startupDelay) return;
+  /// Interrupts the current AI response and immediately re-enters listening
+  /// mode WITHOUT stopping the microphone.  This avoids the ~200 ms audio
+  /// gap caused by a stop + restart cycle and ensures the words that triggered
+  /// the barge-in are forwarded to the server as part of the new user turn.
+  ///
+  /// [capturedChunks] — the rolling buffer of PCM chunks that triggered the
+  /// barge-in.  These were consumed by the barge-in monitor without being
+  /// sent to the server; replaying them ensures Gemini hears the trigger word.
+  void _seamlessBargeinTransition({List<Uint8List> capturedChunks = const <Uint8List>[]}) async {
+    _interruptPending = true;
+    await stopAudioPlayback();
+    _sendMessage({'type': 'interrupt'});
+    _isSpeaking = false;
+    // Transition to connected first — this fires onStateChanged which calls
+    // _stopAllAudio() in the screen, silencing the web audio immediately.
+    _setState(LiveState.connected);
+    // Keep _interruptPending = true through listening AND processing states.
+    // Stale audio chunks from the interrupted AI turn keep arriving in the
+    // network buffer even after the listening guard drops them.  When the user
+    // finishes speaking and state moves to processing, those chunks would
+    // resume playback (old voice re-appears) unless _interruptPending is still
+    // true.  Cleared exclusively by 'ai_generating' — the first signal that
+    // Gemini is responding to the NEW user turn.
+    // Enter listening mode directly — recorder is already running,
+    // so skip _ensureRecorderStopped() and go straight to streaming.
+    _isStreaming = true;
+    _vadSpeechDetected = false;
+    _vadLastSpeechTime = null;
+    _vadSilenceTimer?.cancel();
+    _vadSilenceTimer = null;
+    _maxListenTimer?.cancel();
+    _maxListenTimer = null;
+    _setState(LiveState.listening);
+    _streamAudioChunks();  // re-subscribe to the still-running recorder stream
 
-        final rms = _computeChunkRMS(chunk);
-        onAmplitudeChanged?.call(rms.clamp(0.0, 1.0));
-
-        if (rms > bargeInThreshold) {
-          consecutiveLoudChunks++;
-          if (consecutiveLoudChunks >= requiredConsecutiveChunks) {
-            print('⚡ Auto barge-in: $consecutiveLoudChunks consecutive loud chunks (RMS: ${rms.toStringAsFixed(3)})');
-            _stopBargeInMonitoring();
-            sendInterrupt().then((_) {
-              if (isConnected) startListening();
-            });
-          }
-        } else {
-          // Reset counter on any quiet chunk — must be continuously loud
-          consecutiveLoudChunks = 0;
-        }
-      });
-    } catch (e) {
-      print('⚠️ Error starting barge-in monitoring: $e');
+    // Replay the buffered trigger chunks to the server AFTER subscribing.
+    // The barge-in monitor only reads RMS and never forwards audio, so these
+    // chunks represent actual user speech that Gemini would otherwise miss.
+    for (final chunk in capturedChunks) {
+      if (_isStreaming && isConnected) {
+        _sendMessage({'type': 'audio', 'data': base64Encode(chunk)});
+      }
     }
+
+    // ── CRITICAL: Pre-seed VAD speech state ─────────────────────────────────
+    // _streamAudioChunks() above resets _vadSpeechDetected to false.  Override
+    // it here because we KNOW the user spoke (3 consecutive loud chunks just
+    // confirmed it).  Without this seed:
+    //  • _vadSpeechDetected stays false → VAD silence timer never starts
+    //  • stopListening() is never called → end_of_turn never sent to Gemini
+    //  • Gemini never responds → state stays at Listening then drops to Ready
+    // With this seed the 1200 ms silence timer fires automatically, guaranteeing
+    // Gemini always receives turn_complete and responds after an interruption.
+    _vadSpeechDetected = true;
+    _vadLastSpeechTime = DateTime.now();
+
+    print('⚡ Seamless barge-in complete — mic kept alive, now streaming to server');
   }
 
   /// Stop the barge-in monitoring mic and cancel the subscription.
-  void _stopBargeInMonitoring() async {
+  /// Pass [keepRecorder: true] to cancel only the subscription without
+  /// stopping the underlying recorder (used by _seamlessBargeinTransition).
+  void _stopBargeInMonitoring({bool keepRecorder = false}) async {
     await _bargeInSubscription?.cancel();
     _bargeInSubscription = null;
     // Only stop the recorder if it's running for barge-in (not in listening state)
-    if (_recorder != null &&
+    if (!keepRecorder &&
+        _recorder != null &&
         _recorder!.isRecording() &&
         _state != LiveState.listening) {
       await _recorder!.stopRecording();
@@ -990,6 +1251,7 @@ class GeminiLiveService {
   /// Stops local playback, clears buffered audio, and tells the server to interrupt.
   Future<void> sendInterrupt() async {
     print('⚡ Barge-in: stopping AI speech and sending interrupt');
+    _interruptPending = true;  // Prevent any queued _playBufferedAudio() from firing
     _stopBargeInMonitoring();
     // 1. Stop current audio playback
     await stopAudioPlayback();

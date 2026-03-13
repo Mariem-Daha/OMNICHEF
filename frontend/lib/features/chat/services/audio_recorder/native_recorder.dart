@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:record/record.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'base_recorder.dart';
 
 class NativeRecorder implements BaseRecorder {
@@ -31,7 +33,12 @@ class NativeRecorder implements BaseRecorder {
 
   @override
   Future<bool> hasPermission() async {
-    return await _recorder?.hasPermission() ?? false;
+    if (_recorder == null) return false;
+    // On iOS/Android, record's hasPermission() both checks and triggers
+    // the system dialog on first call, then returns cached state.
+    // On Windows/Web it always returns true (no OS permission needed).
+    if (kIsWeb) return true;
+    return await _recorder!.hasPermission();
   }
 
   @override
@@ -39,10 +46,22 @@ class NativeRecorder implements BaseRecorder {
     if (_recorder == null) return false;
     
     try {
-      // Try to request permission first (works on mobile; no-op on Windows Win32)
-      final hasPermission = await _recorder!.hasPermission();
-      if (!hasPermission) {
-        print('⚠️ NativeRecorder: hasPermission=false, attempting anyway (Win32 may not require explicit grant)');
+      // ── iOS / Android: request microphone permission ──────────────────
+      // On web/Windows this is a no-op (permission_handler returns granted).
+      if (!kIsWeb) {
+        final status = await Permission.microphone.status;
+        if (status.isDenied) {
+          // First time — show the system permission dialog.
+          final result = await Permission.microphone.request();
+          if (!result.isGranted) {
+            print('❌ NativeRecorder: microphone permission denied by user');
+            return false;
+          }
+        } else if (status.isPermanentlyDenied) {
+          // User previously hit "Don't Allow" — we must send them to Settings.
+          print('❌ NativeRecorder: microphone permanently denied — open Settings');
+          return false;
+        }
       }
 
       _chunkController = StreamController<Uint8List>.broadcast();
@@ -51,6 +70,15 @@ class NativeRecorder implements BaseRecorder {
         encoder: AudioEncoder.pcm16bits,
         sampleRate: config.sampleRate,
         numChannels: config.numChannels,
+        // Enable hardware-level echo cancellation and noise suppression.
+        // On Android this routes through the voiceCommunication audio source
+        // which activates the onboard AEC/NS DSP, preventing the speaker
+        // output from being picked up by the mic.
+        echoCancel: true,
+        noiseSuppress: true,
+        androidConfig: const AndroidRecordConfig(
+          audioSource: AndroidAudioSource.voiceCommunication,
+        ),
       );
 
       final stream = await _recorder!.startStream(recordConfig);

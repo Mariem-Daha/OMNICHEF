@@ -200,7 +200,16 @@ class AIService:
             # Build contents list from history + current message
             contents: list[types.Content] = []
             if conversation_history:
-                for msg in conversation_history[-10:]:
+                history = list(conversation_history[-10:])
+                # Sanitize: Gemini requires conversation to start with a user turn.
+                # Drop any leading model messages (e.g. hardcoded welcome greeting).
+                while history and not history[0].get("is_user"):
+                    history.pop(0)
+                # Avoid duplicating the current message if it's already the last
+                # history entry (happens when frontend builds history after setState).
+                if history and history[-1].get("is_user") and history[-1].get("content") == message:
+                    history.pop()
+                for msg in history:
                     role = "user" if msg.get("is_user") else "model"
                     contents.append(
                         types.Content(role=role, parts=[types.Part(text=msg.get("content", ""))])

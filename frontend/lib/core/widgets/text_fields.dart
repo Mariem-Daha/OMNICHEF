@@ -103,6 +103,7 @@ class SearchTextField extends StatefulWidget {
   final void Function(String)? onChanged;
   final VoidCallback? onFilterTap;
   final VoidCallback? onTap;
+  final bool readOnly;
 
   const SearchTextField({
     super.key,
@@ -111,6 +112,7 @@ class SearchTextField extends StatefulWidget {
     this.onChanged,
     this.onFilterTap,
     this.onTap,
+    this.readOnly = false,
   });
 
   @override
@@ -119,6 +121,21 @@ class SearchTextField extends StatefulWidget {
 
 class _SearchTextFieldState extends State<SearchTextField> {
   bool _isFocused = false;
+  final FocusNode _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(() {
+      if (mounted) setState(() => _isFocused = _focusNode.hasFocus);
+    });
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -154,74 +171,69 @@ class _SearchTextFieldState extends State<SearchTextField> {
             ),
         ],
       ),
-      child: Focus(
-        onFocusChange: (focused) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _isFocused = focused);
-          });
-        },
-        child: TextField(
-          controller: widget.controller,
-          onChanged: widget.onChanged,
-          onTap: widget.onTap,
-          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-            fontWeight: FontWeight.w500,
+      child: TextField(
+        controller: widget.controller,
+        focusNode: _focusNode,
+        onChanged: widget.onChanged,
+        onTap: widget.onTap,
+        readOnly: widget.readOnly,
+        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+          fontWeight: FontWeight.w500,
+        ),
+        decoration: InputDecoration(
+          hintText: widget.hint ?? 'Search recipes...',
+          hintStyle: TextStyle(
+            color: isDark 
+                ? AppColors.textTertiaryDark 
+                : AppColors.textTertiaryLight,
+            fontWeight: FontWeight.w400,
+            fontSize: 15,
           ),
-          decoration: InputDecoration(
-            hintText: widget.hint ?? 'Search recipes...',
-            hintStyle: TextStyle(
-              color: isDark 
-                  ? AppColors.textTertiaryDark 
-                  : AppColors.textTertiaryLight,
-              fontWeight: FontWeight.w400,
-              fontSize: 15,
+          prefixIcon: Padding(
+            padding: const EdgeInsets.only(left: 18, right: 12),
+            child: Icon(
+              Icons.search_rounded, 
+              size: 24,
+              color: _isFocused 
+                  ? AppColors.primary 
+                  : (isDark 
+                      ? AppColors.textTertiaryDark 
+                      : AppColors.textTertiaryLight),
             ),
-            prefixIcon: Padding(
-              padding: const EdgeInsets.only(left: 18, right: 12),
-              child: Icon(
-                Icons.search_rounded, 
-                size: 24,
-                color: _isFocused 
-                    ? AppColors.primary 
-                    : (isDark 
-                        ? AppColors.textTertiaryDark 
-                        : AppColors.textTertiaryLight),
-              ),
-            ),
-            prefixIconConstraints: const BoxConstraints(minWidth: 54),
-            suffixIcon: widget.onFilterTap != null
-                ? GestureDetector(
-                    onTap: widget.onFilterTap,
-                    child: Container(
-                      margin: const EdgeInsets.only(right: 8),
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        gradient: AppColors.primaryGradient,
-                        borderRadius: BorderRadius.circular(14),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.primary.withOpacity(0.3),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: const Icon(
-                        Icons.tune_rounded, 
-                        size: 20,
-                        color: Colors.white,
-                      ),
+          ),
+          prefixIconConstraints: const BoxConstraints(minWidth: 54),
+          suffixIcon: widget.onFilterTap != null
+              ? GestureDetector(
+                  onTap: widget.onFilterTap,
+                  child: Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      gradient: AppColors.primaryGradient,
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.primary.withOpacity(0.3),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
                     ),
-                  )
-                : null,
-            border: InputBorder.none,
-            enabledBorder: InputBorder.none,
-            focusedBorder: InputBorder.none,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 0,
-              vertical: 16,
-            ),
+                    child: const Icon(
+                      Icons.tune_rounded, 
+                      size: 20,
+                      color: Colors.white,
+                    ),
+                  ),
+                )
+              : null,
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 0,
+            vertical: 16,
           ),
         ),
       ),

@@ -1,8 +1,11 @@
 ﻿// ignore_for_file: avoid_web_libraries_in_flutter
 import 'dart:async';
 import 'dart:convert';
-import 'dart:html' as html;
-import 'dart:js' as js;
+
+import '../../../core/utils/web_stubs.dart'
+    if (dart.library.html) 'dart:html' as html;
+import '../../../core/utils/js_stubs.dart'
+    if (dart.library.js) 'dart:js' as js;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -47,6 +50,9 @@ class _CookingCompanionScreenState extends State<CookingCompanionScreen>
   bool _isConnecting = false;
   bool _isConnected = false;
   String? _sessionId;
+  int _reconnectAttempts = 0;
+  static const int _maxReconnectAttempts = 5;
+  Timer? _reconnectTimer;
 
   // ── Frame streaming ────────────────────────────────────────────────────────
   Timer? _frameTimer;
@@ -155,8 +161,11 @@ class _CookingCompanionScreenState extends State<CookingCompanionScreen>
       _channel = WebSocketChannel.connect(uri);
       _wsSub = _channel!.stream.listen(
         _onServerMessage,
-        onError: (e) { debugPrint('WS error: $e'); _onDisconnect(); },
-        onDone: _onDisconnect,
+        onError: (e) {
+          debugPrint('WS error: $e');
+          _onDisconnect(unexpected: true);
+        },
+        onDone: () => _onDisconnect(unexpected: true),
         cancelOnError: false,
       );
       // Send user context immediately (before waiting for "connected" reply)
@@ -173,9 +182,24 @@ class _CookingCompanionScreenState extends State<CookingCompanionScreen>
       });
     } catch (e) {
       debugPrint('WS connect: $e');
-      setState(() { _isConnecting = false; _isConnected = false; });
-      _addMsg('Could not connect to AI. Please check your connection.', isError: true);
+      if (mounted) setState(() { _isConnecting = false; _isConnected = false; });
+      _scheduleReconnect();
     }
+  }
+
+  void _scheduleReconnect() {
+    if (_reconnectAttempts >= _maxReconnectAttempts) {
+      debugPrint('WS: max reconnect attempts reached');
+      _addMsg('Connection lost. Tap Reconnect to try again.', isError: true);
+      return;
+    }
+    _reconnectAttempts++;
+    final delay = Duration(seconds: _reconnectAttempts * 2);
+    debugPrint('WS: reconnecting in ${delay.inSeconds}s (attempt $_reconnectAttempts/$_maxReconnectAttempts)');
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(delay, () {
+      if (mounted && !_isConnected) _connect();
+    });
   }
 
   void _send(Map<String, dynamic> payload) {
@@ -189,8 +213,14 @@ class _CookingCompanionScreenState extends State<CookingCompanionScreen>
       final type = data['type'] as String? ?? '';
       switch (type) {
         case 'connected':
+          _reconnectAttempts = 0;  // successful connection — reset counter
           _startFrameTimer();
           _startMic();
+          // Send a hidden trigger so Gemini greets the user immediately.
+          _send({
+            'type': 'text',
+            'text': 'The user has just opened the kitchen assistant. Give a short, warm greeting and ask what they would like to cook today.',
+          });
           if (!mounted) break;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
@@ -248,12 +278,16 @@ class _CookingCompanionScreenState extends State<CookingCompanionScreen>
     }
   }
 
-  void _onDisconnect() {
+  void _onDisconnect({bool unexpected = false}) {
     _frameTimer?.cancel();
     _stopMic();
+    _channel = null;
+    _wsSub = null;
     if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() { _isConnected = false; _isConnecting = false; });
+      if (!mounted) return;
+      setState(() { _isConnected = false; _isConnecting = false; });
+      if (unexpected) _scheduleReconnect();
     });
   }
 
@@ -323,8 +357,10 @@ class _CookingCompanionScreenState extends State<CookingCompanionScreen>
           if (type == 'mic_chunk') {
             final b64 = (raw as dynamic)['data'] as String?;
             if (b64 != null && _isConnected && _micActive) {
-              // Barge-in: interrupt AI if it's talking
-              if (_isAiSpeaking) {
+              // Barge-in: only interrupt AI if VAD has confirmed the user is
+              // actually speaking — prevents speaker echo or background noise
+              // from triggering a false interrupt on every audio chunk.
+              if (_isAiSpeaking && _isUserSpeaking) {
                 _send({'type': 'interrupt'});
                 _jsInterrupt();
                 if (mounted) {
@@ -462,6 +498,7 @@ class _CookingCompanionScreenState extends State<CookingCompanionScreen>
     WidgetsBinding.instance.removeObserver(this);
     _frameTimer?.cancel();
     _cookingTimer?.cancel();
+    _reconnectTimer?.cancel();
     _wsSub?.cancel();
     _msgSub?.cancel();
     _channel?.sink.close();
@@ -814,7 +851,10 @@ class _CookingCompanionScreenState extends State<CookingCompanionScreen>
                       ),
                       if (!_isConnected && !_isConnecting)
                         TextButton(
-                          onPressed: _connect,
+                          onPressed: () {
+                            _reconnectAttempts = 0;
+                            _connect();
+                          },
                           child: const Text('Reconnect', style: TextStyle(color: Colors.white70, fontSize: 12)),
                         )
                       else

@@ -156,6 +156,29 @@
        - All Dartâ†”JS comms use window.postMessage (no allowInterop needed)
   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
   <script>
+    // AEC interceptor: force echo-cancellation on every getUserMedia call so the
+    // Flutter 
+ecord package always gets hardware AEC, preventing AI speaker
+    // output from feeding back into the mic (echo / self-hearing issue).
+    (function() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+      var _origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = function(constraints) {
+        try {
+          if (constraints && constraints.audio) {
+            var aec = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+            if (constraints.audio === true) {
+              constraints = Object.assign({}, constraints, { audio: aec });
+            } else if (typeof constraints.audio === 'object') {
+              constraints = Object.assign({}, constraints, { audio: Object.assign({}, aec, constraints.audio) });
+            }
+          }
+        } catch(e) {}
+        return _origGUM(constraints);
+      };
+    })();
+  </script>
+  <script>
     window.CuisineeAudio = {
       // â”€â”€ internal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       _micCtx:    null,
@@ -167,18 +190,21 @@
       _interrupted: false,
       _isSpeaking:  false,
       _silenceTimer: null,
+      _chunkCount:  0,   // counts chunks in current turn (0 = first chunk)
 
-      _SPEECH_THRESHOLD: 0.003,  // float32 RMS threshold for VAD
+      _SPEECH_THRESHOLD: 0.01,  // float32 RMS threshold for VAD (raised to reject ambient noise)
 
       // â”€â”€ Microphone â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       // Called by Dart: starts mic, pushes chunks to Dart via postMessage.
       async startMic() {
         try {
-          // Try progressively simpler constraints — older iOS Safari rejects some.
+          // Try progressively simpler constraints — keep AEC in all fallbacks.
+          // The AEC interceptor above also injects AEC into any bare { audio: true }
+          // call, but being explicit here ensures it even without the interceptor.
           const constraintOptions = [
             { audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } },
-            { audio: { channelCount: 1 } },
-            { audio: true },
+            { audio: { echoCancellation: true, noiseSuppression: true } },
+            { audio: { echoCancellation: true } },
           ];
           let stream = null;
           let lastErr = null;
@@ -258,10 +284,17 @@
         if (this._interrupted) return;
 
         if (!this._playCtx || this._playCtx.state === 'closed') {
-          this._playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+          this._playCtx  = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
           this._playTime = 0;
+          this._chunkCount = 0;
           this._gainNode = null;  // reset so it's recreated for the new context
         }
+        // Mark speaking immediately — BEFORE any async work.
+        // onTurnPlaybackDone in Dart checks isSpeaking() right after turn_complete
+        // arrives; if we set _isSpeaking only after await resume(), there is a
+        // window where isSpeaking() returns false while chunks are still being
+        // scheduled, causing the mic to open while the AI is still speaking.
+        this._isSpeaking = true;
         // iOS: a context created outside a user-gesture starts as 'suspended'.
         // Await resume() so buffers are only scheduled on a running context —
         // without this, src.start() is silently ignored on iOS Safari/Chrome.
@@ -292,19 +325,33 @@
           src.buffer = buf;
           src.connect(this._gainNode);  // route through gain node
 
-          const now   = this._playCtx.currentTime;
-          const start = (this._playTime < now + 0.01) ? now + 0.02 : this._playTime;
+          const now = this._playCtx.currentTime;
+          // First chunk of a new turn: use a larger 150 ms pre-roll so the
+          // AudioContext scheduler has enough time to decode and queue the
+          // buffer before it's due to play.  Subsequent chunks chain tightly.
+          const isFirst = (this._chunkCount === 0);
+          const minLead = isFirst ? 0.15 : 0.02;
+          const start   = (this._playTime < now + minLead) ? now + minLead : this._playTime;
           src.start(start);
           this._playTime = start + buf.duration;
+          this._chunkCount++;
           this._isSpeaking = true;
 
           if (this._silenceTimer) clearTimeout(this._silenceTimer);
+          // Calculate time remaining until ALL scheduled audio finishes.
+          // With streaming, multiple chunks may be queued ahead in the scheduler.
+          // Using just buf.duration would fire speak_end prematurely while earlier
+          // chunks are still playing.
+          // The 0.80 s grace period (up from 0.25 s) covers the gap introduced
+          // when the AI calls a function (e.g. start_step_timer) mid-turn: the
+          // function response audio typically arrives 300–700 ms after the last
+          // narration chunk, so 0.80 s ensures speak_end never fires inside that
+          // window and ends the turn prematurely.
+          const remainingPlay = Math.max(0, this._playTime - this._playCtx.currentTime);
           this._silenceTimer = setTimeout(() => {
-            if (this._playCtx && this._playTime <= this._playCtx.currentTime + 0.05) {
-              this._isSpeaking = false;
-              window.postMessage({ source: 'CuisineeAudio', type: 'speak_end' }, '*');
-            }
-          }, Math.ceil((buf.duration + 0.25) * 1000));
+            this._isSpeaking = false;
+            window.postMessage({ source: 'CuisineeAudio', type: 'speak_end' }, '*');
+          }, Math.ceil((remainingPlay + 0.80) * 1000));
 
         } catch (err) {
           console.error('[CuisineeAudio] Playback error:', err);
@@ -315,19 +362,21 @@
         this._interrupted = true;
         this._isSpeaking  = false;
         this._playTime    = 0;
-        // Mute via GainNode — do NOT close AudioContext.
-        // Closing destroys the iOS gesture-unlock: any new context created
-        // outside a gesture will start in 'suspended' state and produce silence.
+        this._chunkCount  = 0;
+        // Orphan the current GainNode by disconnecting it from the destination.
+        // All old scheduled AudioBufferSourceNodes remain wired to the orphaned
+        // node and produce no output — they drain silently without affecting the
+        // user.  A fresh GainNode is created for the next turn's audio in
+        // playPcmChunk().  This avoids the double-voice bug where the old
+        // muted-then-unmuted GainNode let scheduled sources replay at full
+        // volume 400 ms after the barge-in.
         if (this._gainNode && this._playCtx) {
-          try { this._gainNode.gain.cancelScheduledValues(0); } catch(_) {}
-          try { this._gainNode.gain.setValueAtTime(0, this._playCtx.currentTime); } catch(_) {}
+          try { this._gainNode.disconnect(); } catch(_) {}
         }
+        this._gainNode = null;  // force recreation for next turn
         setTimeout(() => {
           this._interrupted = false;
-          // Restore volume for the next AI response.
-          if (this._gainNode && this._playCtx) {
-            try { this._gainNode.gain.setValueAtTime(1, this._playCtx.currentTime); } catch(_) {}
-          }
+          this._chunkCount  = 0;  // next turn starts fresh
         }, 400);
       },
 

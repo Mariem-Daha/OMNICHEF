@@ -8,11 +8,14 @@ import '../models/user_model.dart';
 /// API Service for communicating with the OMNICHEF backend.
 class ApiService {
   // Base URL can be configured via --dart-define=API_URL=...
-  // Default to production backend
+  // Default to production Cloud Run backend
   static const String _baseUrl = String.fromEnvironment(
     'API_URL',
     defaultValue: 'http://localhost:8000/api',
   );
+
+  /// Exposed for WebSocket consumers that need to derive wss:// URLs.
+  static String get baseUrl => _baseUrl;
 
   static const _tokenKey = 'auth_token';
 
@@ -296,6 +299,34 @@ class ApiService {
     return UserModel.fromJson(data);
   }
   
+  /// Get personalised recipe recommendations based on user preferences.
+  Future<List<Recipe>> getRecommendations({
+    List<String> preferences = const [],
+    List<String> allergies = const [],
+    List<String> disliked = const [],
+    int limit = 10,
+  }) async {
+    final params = <String>[];
+    for (final p in preferences) {
+      params.add('preferences=${Uri.encodeComponent(p)}');
+    }
+    for (final a in allergies) {
+      params.add('allergies=${Uri.encodeComponent(a)}');
+    }
+    for (final d in disliked) {
+      params.add('disliked=${Uri.encodeComponent(d)}');
+    }
+    params.add('limit=$limit');
+
+    final response = await http.get(
+      Uri.parse('$_baseUrl/recipes/recommendations?${params.join('&')}'),
+      headers: _headers,
+    );
+
+    final data = _handleResponse(response) as List;
+    return data.map((json) => Recipe.fromJson(json)).toList();
+  }
+
   /// Get saved recipes.
   Future<List<Recipe>> getSavedRecipes() async {
     final response = await http.get(
@@ -347,10 +378,13 @@ class ApiService {
       Uri.parse('$_baseUrl/chat'),
       headers: _headers,
       body: jsonEncode(body),
+    ).timeout(
+      const Duration(seconds: 30),
+      onTimeout: () => throw ApiException('Request timed out. Please check your connection.', 408),
     );
     
     final data = _handleResponse(response);
-    return data['response'] as String;
+    return (data['response'] as String?) ?? '';
   }
   
   /// Check if the AI service is healthy.

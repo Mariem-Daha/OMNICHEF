@@ -2,9 +2,13 @@
 // ignore_for_file: avoid_web_libraries_in_flutter
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'dart:html' as html;
-import 'dart:js' as js;
 import 'dart:math' as math;
+
+// Conditional web-only imports — stubs are used on native platforms.
+import '../../../core/utils/web_stubs.dart'
+    if (dart.library.html) 'dart:html' as html;
+import '../../../core/utils/js_stubs.dart'
+    if (dart.library.js) 'dart:js' as js;
 import 'dart:ui';
 import 'dart:convert';
 import 'dart:async';
@@ -59,10 +63,8 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
   bool _isConnecting = true;
   bool _isSpeaking = false;
 
-  // Greeting shown from the very first frame (no post-frame-callback delay).
-  static const String _greetingText =
-      "Welcome back, Chef! I\u2019m Cuisin\u00e9e \u2014 your AI kitchen companion. "
-      "Ask me for a recipe, say \u2018what can I make with chicken\u2019, or just tell me what you\u2019re craving!";
+  // Placeholder shown while the AI is connecting and about to speak its greeting.
+  static const String _connectingText = "Connecting to your AI kitchen companion...";
 
   // Phrase cycling removed â€” simple labels kept
 
@@ -74,6 +76,7 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
 
   Widget? _activeContent;
   String _currentResponseText = "";
+  String? _lastTranscriptFragment;  // dedup guard for transcript fragments
   // True when _activeContent was set by a function call (timer / recipe).
   // Prevents incoming transcripts from overwriting it.
   bool _functionContentActive = false;
@@ -179,6 +182,7 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
                 // cleared when no recipe/timer function widget is displayed.
                 if (!_functionContentActive) {
                   _currentResponseText = "";
+                  _lastTranscriptFragment = null;
                   _activeContent = null;
                 }
                 break;
@@ -208,18 +212,21 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
        WidgetsBinding.instance.addPostFrameCallback((_) {
          if (!mounted) return;
          setState(() {
-            // Always accumulate — Gemini streams transcript in fragments
-            // (e.g. word-by-word) during the processing phase before audio
-            // plays. Replacing instead of appending caused only the last
-            // fragment to show, effectively making subtitles blank.
+            // Deduplicate: skip if exact same fragment as last time
+            if (text == _lastTranscriptFragment) return;
+            _lastTranscriptFragment = text;
             _currentResponseText += text;
 
-            // Detect ingredient confirmation from vision probe
+            // Detect ingredient confirmation from vision probe.
+            // Once an ingredient is found, cancel ingredient-ID probing (it fires
+            // find_recipe on every tick — that causes endless repeated suggestions).
+            // Switch to cooking-mode probing only after get_recipe_details loads.
             if (_cameraOn && !_ingredientDetected &&
                 _currentResponseText.contains('INGREDIENT_DETECTED:')) {
               _ingredientDetected = true;
-              // Now safe to start periodic probing for recipe suggestions
-              _startVisionProbing();
+              // Stop the ticking ingredient-ID probe — the AI is taking over
+              _visionProbeTimer?.cancel();
+              _visionProbeTimer = null;
             }
 
             // Show AI text response when no function widget is active.
@@ -254,7 +261,9 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
                   );
                   _functionContentActive = true;
                   _isCookingMode = true;
-                  if (_cameraOn) _startVisionProbing();
+                  // Do NOT start vision probing here — the user hasn't chosen
+                  // a recipe yet and ingredient-ID probes spam 'INGREDIENT_DETECTED'
+                  // repeatedly. Probing starts only after get_recipe_details loads.
                } else {
                   // No results: clear content and let the AI voice handle it gracefully
                   _activeContent = null;
@@ -327,9 +336,11 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
        );
     };
 
-    // Handle audio playback on UI thread
+    // Handle audio playback on UI thread (native platforms only).
+    // On web, streaming is handled by onStreamAudioChunk / onTurnPlaybackDone.
     _geminiService.onAudioReadyToPlay = (wavBytes, sampleRate) async {
       if (!mounted) return;
+      if (kIsWeb) return;  // Web uses real-time streaming path
 
       // Cancel any dangling completer/sub from a previous turn.
       _stopAllAudio();
@@ -380,22 +391,32 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
 
         } else {
           // ── Native path (iOS app / Android) ───────────────────────────────
-          await _uiAudioPlayer?.stop();
-          await _uiAudioPlayer?.dispose();
-          _uiAudioPlayer = AudioPlayer();
-          await _uiAudioPlayer?.setReleaseMode(ReleaseMode.stop);
+          // Reuse the existing AudioPlayer instead of dispose+recreate on every
+          // turn.  Recreating it caused silent play failures on Android where the
+          // audio session had not fully released, leaving onPlayerComplete un-fired
+          // and the mic permanently closed.
+          _uiAudioPlayer ??= AudioPlayer();
+          await _uiAudioPlayer!.stop();
+          await _uiAudioPlayer!.setReleaseMode(ReleaseMode.stop);
 
-          _uiAudioPlayer!.onPlayerComplete.listen((_) {
+          // Use local subscriptions so they don't accumulate across turns.
+          StreamSubscription? completeSub;
+          StreamSubscription? stateSub;
+          completeSub = _uiAudioPlayer!.onPlayerComplete.listen((_) {
             if (!completer.isCompleted) completer.complete();
+            completeSub?.cancel();
+            stateSub?.cancel();
           });
-          _uiAudioPlayer!.onPlayerStateChanged.listen((state) {
+          stateSub = _uiAudioPlayer!.onPlayerStateChanged.listen((state) {
             if (state == PlayerState.stopped || state == PlayerState.completed) {
               if (!completer.isCompleted) completer.complete();
             }
           });
 
-          await _uiAudioPlayer?.play(BytesSource(wavBytes));
+          await _uiAudioPlayer!.play(BytesSource(wavBytes));
           await completer.future;
+          completeSub.cancel();
+          stateSub.cancel();
         }
 
         // Notify service — triggers auto-start mic after 300 ms breath pause.
@@ -416,18 +437,66 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
       });
     };
 
+    // ── Web: real-time audio streaming ──────────────────────────────────────
+    // Each audio chunk is sent directly to the Web Audio API for gapless
+    // playback as it arrives, eliminating the buffer-then-play pipeline that
+    // caused 800ms+ dead air, sentence cuts, and choppy audio.
+    if (kIsWeb) {
+      _geminiService.onStreamAudioChunk = (b64, sampleRate) {
+        if (!mounted) return;
+        try {
+          js.context['CuisineeAudio']?.callMethod('playPcmChunk', [b64]);
+        } catch (_) {}
+      };
+
+      _geminiService.onTurnPlaybackDone = () {
+        if (!mounted) return;
+
+        // Register the speak_end listener FIRST — before checking isSpeaking.
+        // If we check first and audio finishes in the tiny gap before subscribing,
+        // speak_end fires unseen and onAudioPlaybackComplete is never called
+        // (mic stays closed forever). Subscribe-then-check eliminates this race.
+        _audioCompleter = Completer<void>();
+        final completer = _audioCompleter!;
+
+        _webSpeakEndSub?.cancel();
+        _webSpeakEndSub = html.window.onMessage.listen((html.MessageEvent event) {
+          try {
+            final raw = event.data;
+            if (raw == null) return;
+            final source = (raw as dynamic)['source'] as String?;
+            final type   = (raw as dynamic)['type']   as String?;
+            if (source == 'CuisineeAudio' && type == 'speak_end') {
+              if (!completer.isCompleted) completer.complete();
+            }
+          } catch (_) {}
+        });
+
+        // Now check: if audio is already done (very short response or the
+        // turn_complete arrived after the last speak_end fired), complete
+        // the completer immediately so we don't wait indefinitely.
+        try {
+          final res = js.context['CuisineeAudio']?.callMethod('isSpeaking', []);
+          if (res != true && !completer.isCompleted) completer.complete();
+        } catch (_) {}
+
+        completer.future.then((_) {
+          _webSpeakEndSub?.cancel();
+          _webSpeakEndSub = null;
+          _geminiService.onAudioPlaybackComplete();
+        });
+      };
+    }
+
     // Connect — in the background while greeting is already showing
     final voiceWsUrl = ApiService.baseUrl
         .replaceFirst('https://', 'wss://')
         .replaceFirst('http://', 'ws://');
     await _geminiService.connect('$voiceWsUrl/voice/ws');
 
-    // BUG FIX: Send greetingDelivered:true because the local hardcoded greeting
-    // is already visible.  Sending false caused the server to trigger a second
-    // Gemini greeting which (a) wasted a full turn before the user could speak,
-    // (b) inflated the server-side adaptive noise floor while the speakers were
-    // playing, making subsequent user speech harder to detect, and (c) produced
-    // a confusing double-greeting experience.
+    // Send greetingDelivered:false so the backend triggers an AI voice greeting
+    // automatically.  After Gemini finishes speaking, onAudioPlaybackComplete()
+    // fires and the mic opens automatically — no button press needed.
     if (mounted) {
       final user = context.read<UserProvider>().user;
       if (user != null) {
@@ -437,14 +506,14 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
           dislikedIngredients: user.dislikedIngredients,
           tastePreferences: user.tastePreferences,
           cookingSkill: user.cookingSkill,
-          greetingDelivered: true,
+          greetingDelivered: false,
         );
       } else {
-        _geminiService.sendUserContext(greetingDelivered: true);
+        _geminiService.sendUserContext(greetingDelivered: false);
       }
     }
   }
-  
+
   void _toggleListening() async {
     // ── Ensure microphone permission on iOS/Android ────────────────────────
     if (!kIsWeb) {
@@ -641,12 +710,7 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
         _isCookingMode = false;
       });
       _startFrameTimer();
-      // Send camera-specific greeting; DO NOT fire vision probe yet —
-      // wait until the AI detects an ingredient before suggesting recipes.
-      _geminiService.sendText(
-        "CAMERA_STARTED: The user just opened the camera. "
-        "Greet them naturally and tell them to show you an ingredient.",
-      );
+      // Camera started quietly. The AI receives frames without being forced to speak immediately.
     } on CameraException catch (e) {
       debugPrint('Camera start error: ${e.code} — ${e.description}');
       if (!mounted) return;
@@ -711,6 +775,10 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
       _cameraOn = false;
       _ingredientDetected = false;
     });
+    // Do NOT send any message to the AI here — sending a text message with
+    // end_of_turn=True while the AI is speaking cuts it mid-sentence and
+    // triggers the "sorry about that" recovery phrase.  The video frames
+    // simply stop arriving; the AI transitions naturally to voice-only.
   }
 
   // ── Automatic vision probing ──────────────────────────────────────────────
@@ -719,68 +787,38 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
   /// Does NOT fire immediately — the camera greeting handles the first turn.
   /// Call after a recipe is loaded (cooking mode) or after the user explicitly
   /// asks the AI to look at an ingredient.
+  /// Automatic vision probing has been disabled because it forces the AI to
+  /// repeatedly speak every few seconds, resulting in a spammy, repetitive UX.
+  /// The user can simply ask "What do you see?" or "Is this step done?".
   void _startVisionProbing() {
     _visionProbeTimer?.cancel();
     _visionProbeTimer = null;
-    if (_isCookingMode) {
-      // Fire immediately for step validation in cooking mode
-      _sendVisionProbe();
-      _visionProbeTimer = Timer.periodic(
-        const Duration(seconds: 12),
-        (_) => _sendVisionProbe(),
-      );
-    } else {
-      // Ingredient-ID mode: delay first probe by 3 s so the user has time
-      // to point the camera before we start analysing.
-      _visionProbeTimer = Timer.periodic(
-        const Duration(seconds: 5),
-        (_) => _sendVisionProbe(),
-      );
-    }
-  }
-
-  /// Sends one context-aware vision probe to the AI.
-  /// In cooking mode: checks whether the current step is visually complete.
-  /// Otherwise: identifies visible ingredients — only if confident.
-  Future<void> _sendVisionProbe() async {
-    if (!_cameraOn || _cameraController == null || !_cameraController!.value.isInitialized) return;
-    if (_isCookingMode) {
-      final stepText = _cookingViewKey.currentState?.getCurrentStepText();
-      if (stepText == null || stepText.isEmpty) return;
-      _geminiService.sendText(
-        "VISION WATCH: Current step is '$stepText'. "
-        "Look at the camera and tell me if this step is done.",
-      );
-    } else {
-      // Ingredient-ID mode: strict confidence rules to prevent hallucination.
-      _geminiService.sendText(
-        "FRIDGE FORAGE: Look carefully at the camera frame. "
-        "Only name ingredients you can clearly and confidently see. "
-        "If nothing is clearly visible or confidence is low, say exactly: "
-        "'I can\u2019t clearly see any ingredients yet \u2014 show me something and I\u2019ll help you cook with it!' "
-        "Do NOT invent or guess ingredients. "
-        "If you do see ingredients confidently, say 'INGREDIENT_DETECTED:' then name them, then suggest a recipe.",
-      );
-    }
-    await Future.delayed(const Duration(milliseconds: 300));
-    await _captureAndSendFrame();
   }
 
   /// Stops the Web Audio API engine (web) AND the native audioplayer, then
   /// resolves any pending completer so no futures hang.
   // Stops any in-flight audio.
-  // IMPORTANT: CuisineeAudio.interrupt() is only called when audio is actually
-  // playing (completer is pending). Calling interrupt() unconditionally sets
-  // _interrupted=true for 400 ms in JS, which would silently block the NEXT
-  // turn's audio if the state-change callback fires after normal completion.
+  // CRITICAL: do NOT use Flutter's _isSpeaking to decide whether to call
+  // CuisineeAudio.interrupt().  _isSpeaking is set via addPostFrameCallback
+  // (async), so it lags one frame behind reality.  Calling interrupt() on a
+  // normal turn-end transition (speaking→connected) sets _interrupted=true for
+  // 400 ms and silently drops the first chunks of the NEXT AI response — the
+  // root cause of "voice cuts".  Use the JS engine as the single source of truth.
   void _stopAllAudio() {
+    if (kIsWeb) {
+      bool webIsPlaying = false;
+      try {
+        webIsPlaying =
+            js.context['CuisineeAudio']?.callMethod('isSpeaking', []) == true;
+      } catch (_) {}
+      if (webIsPlaying) {
+        try { js.context['CuisineeAudio']?.callMethod('interrupt', []); } catch (_) {}
+      }
+      _webSpeakEndSub?.cancel();
+      _webSpeakEndSub = null;
+    }
     final bool inFlight = _audioCompleter != null && !_audioCompleter!.isCompleted;
     if (inFlight) {
-      if (kIsWeb) {
-        try { js.context['CuisineeAudio']?.callMethod('interrupt', []); } catch (_) {}
-        _webSpeakEndSub?.cancel();
-        _webSpeakEndSub = null;
-      }
       _audioCompleter!.complete();
     }
     _uiAudioPlayer?.stop();
@@ -930,17 +968,20 @@ class _VoiceAssistantModeState extends State<VoiceAssistantMode> with TickerProv
           ),
         ),
 
-        // 5. AI response subtitle — shown only after ingredient detected
+        // 5. AI response subtitle — shown only after ingredient detected OR when recipes are loaded
         //    OR for "I can't see anything" messages (always show those briefly)
-        if (_activeContent != null && _ingredientDetected)
+        if (_activeContent != null && (_ingredientDetected || _functionContentActive))
           Positioned(
             bottom: 0, left: 0, right: 0,
             child: SafeArea(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 400),
-                  child: _activeContent,
+                child: SizedBox(
+                  height: MediaQuery.of(context).size.height * 0.5,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 400),
+                    child: _activeContent,
+                  ),
                 ),
               ),
             ),

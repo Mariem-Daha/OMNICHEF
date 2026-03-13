@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/models/recipe_model.dart';
 import '../../../core/providers/recipe_provider.dart';
 import '../../../core/widgets/recipe_cards.dart';
 import '../../../core/widgets/text_fields.dart';
@@ -376,7 +377,7 @@ class _RecipeLibraryScreenState extends State<RecipeLibraryScreen>
     );
   }
 
-  Widget _buildRecipeGrid(List recipes) {
+  Widget _buildRecipeGrid(List<Recipe> recipes) {
     final isMobile = Responsive.isMobile(context);
     final horizontalPadding = Responsive.horizontalPadding(context);
     final recipeProvider = context.read<RecipeProvider>();

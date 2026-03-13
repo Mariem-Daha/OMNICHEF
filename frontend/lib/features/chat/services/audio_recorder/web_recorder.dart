@@ -35,6 +35,10 @@ class WebRecorder implements BaseRecorder {
         encoder: AudioEncoder.pcm16bits,
         sampleRate: 16000, 
         numChannels: 1,
+        // Request AEC + NS so the browser applies hardware echo cancellation
+        // — prevents AI speaker output from feeding back into the mic.
+        echoCancel: true,
+        noiseSuppress: true,
       );
 
       final stream = await _recorder.startStream(recordConfig);

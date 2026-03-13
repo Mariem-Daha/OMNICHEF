@@ -141,6 +141,17 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     // Update context suggestions based on message
     _updateContextSuggestions(text);
 
+    // BUG FIX: Build conversation history BEFORE adding the current user
+    // message to _messages, and skip the initial AI welcome message (id='1')
+    // so the history sent to Gemini is valid (starts with user, no duplicates).
+    final conversationHistory = _messages
+        .where((m) => m.id != '1') // exclude hardcoded welcome message
+        .map((m) => <String, dynamic>{
+          'content': m.content,
+          'is_user': m.isUser,
+        })
+        .toList();
+
     setState(() {
       _messages.add(ChatMessage(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -156,13 +167,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
     // Call AI API
     try {
-      // Build conversation history for context
-      final history = _messages.map((m) => {
-        'content': m.content,
-        'is_user': m.isUser,
-      }).toList();
-      
-      final response = await _apiService.chat(text, conversationHistory: history);
+      final response = await _apiService.chat(text, conversationHistory: conversationHistory);
       
       if (mounted) {
         setState(() {

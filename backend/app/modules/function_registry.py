@@ -57,14 +57,28 @@ async def find_recipe(query: str, db: Session = None) -> Dict[str, Any]:
     if not db:
         return {"success": False, "error": "Database unavailable"}
     try:
-        term = f"%{query.lower()}%"
-        recipes = db.query(Recipe).filter(
-            or_(
-                func.lower(Recipe.name).like(term),
-                func.lower(Recipe.description).like(term),
-                func.lower(Recipe.cuisine).like(term),
+        # Split query into words to match multiple ingredients (e.g. "carrots chicken")
+        import re
+        words = [w.strip() for w in re.split(r'[\s,]+', query.lower()) if w.strip()]
+        
+        if not words:
+            words = [query.lower()]
+
+        filters = []
+        for word in words:
+            term = f"%{word}%"
+            filters.append(
+                or_(
+                    func.lower(Recipe.name).like(term),
+                    func.lower(Recipe.description).like(term),
+                    func.lower(Recipe.cuisine).like(term),
+                    # We can also check tags or ingredients if they are text arrays, 
+                    # but name/description are heavily weighted.
+                )
             )
-        ).order_by(desc(Recipe.rating)).limit(6).all()
+            
+        from sqlalchemy import and_
+        recipes = db.query(Recipe).filter(and_(*filters)).order_by(desc(Recipe.rating)).limit(6).all()
 
         if not recipes:
             # Fallback: return popular recipes so the AI always has something to show

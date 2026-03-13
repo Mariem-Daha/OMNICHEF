@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../../core/widgets/buttons.dart';
+import '../../../core/widgets/text_fields.dart';
+import '../../../core/providers/user_provider.dart';
+import '../../../core/models/user_model.dart';
 import '../../../core/services/preferences_service.dart';
-import '../../onboarding/screens/preference_quiz_screen.dart';
+import 'package:provider/provider.dart';
+import 'signup_screen.dart';
 import '../../navigation/main_navigation.dart';
+import '../../onboarding/screens/preference_quiz_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -12,6 +18,9 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStateMixin {
+  final _formKey = GlobalKey<FormState>();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
   bool _isLoading = false;
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
@@ -42,6 +51,8 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 
   @override
   void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
     _animationController.dispose();
     super.dispose();
   }
@@ -49,118 +60,122 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   Future<void> _login() async {
     setState(() => _isLoading = true);
     
-    final bool setupDone = await PreferencesService().hasCompletedSetup();
+    final userProvider = context.read<UserProvider>();
     
-    if (!mounted) return;
-    setState(() => _isLoading = false);
+    // Create a mock user for the hackathon
+    final mockUser = UserModel(
+      id: "hackathon_judge",
+      email: "judge@gemini.dev",
+      name: "Gemini Judge",
+      healthFilters: [],
+      cookingSkill: "Chef",
+      createdAt: DateTime.now(),
+    );
     
-    if (setupDone) {
-      // Returning user — preferences already loaded by UserProvider.init()
+    // Inject mock user and bypass auth
+    userProvider.setUser(mockUser);
+
+    // Route new users to the preference quiz, returning users to home
+    final hasSetup = await PreferencesService().hasCompletedSetup();
+    
+    if (mounted) {
+      setState(() => _isLoading = false);
+      
       Navigator.pushReplacement(
         context,
         PageRouteBuilder(
           pageBuilder: (context, animation, secondaryAnimation) =>
-              const MainNavigation(),
+              hasSetup ? const MainNavigation() : const PreferenceQuizScreen(),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return FadeTransition(opacity: animation, child: child);
           },
           transitionDuration: const Duration(milliseconds: 400),
         ),
       );
-    } else {
-      // First-time user — show the preference quiz
-      Navigator.pushReplacement(
-        context,
-        PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) =>
-              const PreferenceQuizScreen(),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return FadeTransition(opacity: animation, child: child);
-          },
-          transitionDuration: const Duration(milliseconds: 600),
-        ),
-      );
     }
   }
 
+  void _showComingSoon(String feature) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$feature coming soon!'),
+        backgroundColor: AppColors.accent,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
     return Scaffold(
-      backgroundColor: AppColors.backgroundDark,
       body: SafeArea(
         child: FadeTransition(
           opacity: _fadeAnimation,
           child: SlideTransition(
             position: _slideAnimation,
-            child: Padding(
+            child: SingleChildScrollView(
               padding: const EdgeInsets.all(24),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // Logo
-                  Image.asset(
-                    'assets/images/gemini_logo.png',
-                    height: 80,
-                    errorBuilder: (_, __, ___) => Icon(
-                      Icons.restaurant_menu_rounded,
-                      size: 60,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  const Text(
-                    'OMNICHEF',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 26,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 4,
-                    ),
-                  ),
-                  const SizedBox(height: 52),
-
-                  // Enter button
-                  SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: ElevatedButton(
-                      onPressed: _isLoading ? null : _login,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.black,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      child: _isLoading
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.black,
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 40),
+                    
+                    // Logo and title
+                    Center(
+                      child: Column(
+                        children: [
+                          Hero(
+                            tag: 'app_logo',
+                            child: SizedBox(
+                              width: 160,
+                              height: 160,
+                              child: Image.asset(
+                                'assets/images/gemini_logo.png',
+                                fit: BoxFit.contain,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Icon(Icons.restaurant_menu_rounded,
+                                    size: 60,
+                                    color: AppColors.primary,
+                                  );
+                                },
                               ),
-                            )
-                          : const Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  'Enter Kitchen',
-                                  style: TextStyle(
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 0.3,
-                                  ),
-                                ),
-                                SizedBox(width: 10),
-                                Icon(Icons.arrow_forward_rounded, size: 20),
-                              ],
                             ),
+                          ),
+                          const SizedBox(height: 24),
+                          Text(
+                            'Welcome Back',
+                            style: Theme.of(context).textTheme.displaySmall,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Sign in to continue cooking',
+                            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                  color: isDark 
+                                      ? AppColors.textSecondaryDark 
+                                      : AppColors.textSecondaryLight,
+                                ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                    
+                    const SizedBox(height: 72),
+                    
+                    // Login button
+                    PrimaryButton(
+                      text: 'Sign In',
+                      onPressed: _login,
+                      isLoading: _isLoading,
+                    ),
+                    
+                    const SizedBox(height: 32),
+                  ],
+                ),
               ),
             ),
           ),

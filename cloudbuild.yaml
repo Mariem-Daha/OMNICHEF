@@ -19,7 +19,7 @@
 #   _IMAGE_TAG      – image tag               (default: latest)
 
 substitutions:
-  _SERVICE_NAME: cuisinee-backend
+  _SERVICE_NAME: omnichef-backend
   _REGION: us-central1
   _IMAGE_TAG: latest   # override with --substitutions _IMAGE_TAG=$(git rev-parse --short HEAD)
 

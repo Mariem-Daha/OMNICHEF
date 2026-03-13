@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/services/preferences_service.dart';
 import '../../../core/providers/user_provider.dart';
+import '../../../core/providers/recipe_provider.dart';
 import '../../navigation/main_navigation.dart';
 
 class PreferenceQuizScreen extends StatefulWidget {
@@ -119,6 +120,16 @@ class _PreferenceQuizScreenState extends State<PreferenceQuizScreen>
 
     if (mounted) {
       await context.read<UserProvider>().applyLocalPreferences(prefs);
+    }
+
+    // Trigger recommendations with the freshly saved preferences
+    if (mounted) {
+      final mergedPrefs = [..._healthGoals, ..._favoriteIngredients];
+      context.read<RecipeProvider>().loadRecommendations(
+        preferences: mergedPrefs,
+        allergies: prefs.asAllergies,
+        disliked: [],
+      );
     }
 
     if (mounted) {

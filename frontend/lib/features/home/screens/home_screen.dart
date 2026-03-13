@@ -1,17 +1,16 @@
 import 'package:flutter/material.dart';
+import 'dart:ui';
 import 'package:provider/provider.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/providers/recipe_provider.dart';
 import '../../../core/providers/user_provider.dart';
 import '../../../core/providers/theme_provider.dart';
 import '../../../core/widgets/recipe_cards.dart';
-import '../../../core/widgets/text_fields.dart';
 import '../../../core/widgets/skeleton_loaders.dart';
 import '../../../core/utils/responsive.dart';
 import '../widgets/section_header.dart';
 import '../../chat/screens/voice_assistant_mode.dart';
 import '../../recipes/screens/recipe_detail_screen.dart';
-import '../../health_filters/screens/health_filters_screen.dart';
 import '../../recipes/screens/recipe_library_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -23,6 +22,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
+  late PageController _recoPageController;
+  int _recoPage = 0;
   bool _isLoading = true;
   int _currentTipIndex = 0;
 
@@ -47,21 +48,40 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       vsync: this,
       duration: const Duration(milliseconds: 800),
     );
+    _recoPageController = PageController(viewportFraction: 0.92);
     
     // Rotate tips every 8 seconds
     _startTipRotation();
     
-    // Simulate loading
+    // Load initial data then recommendations
     Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
             setState(() => _isLoading = false);
             _animationController.forward();
+            _loadRecommendations();
           }
         });
       }
     });
+  }
+
+  void _loadRecommendations() {
+    final userProvider = context.read<UserProvider>();
+    final user = userProvider.user;
+    if (user == null) return;
+
+    final prefs = [
+      ...user.healthFilters,
+      ...user.tastePreferences,
+    ];
+
+    context.read<RecipeProvider>().loadRecommendations(
+      preferences: prefs,
+      allergies: user.allergies,
+      disliked: user.dislikedIngredients,
+    );
   }
 
   void _startTipRotation() {
@@ -82,6 +102,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   @override
   void dispose() {
     _animationController.dispose();
+    _recoPageController.dispose();
     super.dispose();
   }
 
@@ -225,53 +246,113 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     ),
                   ),
                 ),
-            
-                // Search Bar
+                // ── Personalised Recommendations ────────────────────────────
                 SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(horizontalPadding, isMobile ? 10 : 14, horizontalPadding, isMobile ? 10 : 14),
-                    child: SearchTextField(
-                      hint: 'Ask Gemini or search recipes, ingredients...',
-                      onFilterTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const HealthFiltersScreen(),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-
-                // Daily Suggestion
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(horizontalPadding, isMobile ? 24 : 32, horizontalPadding, 0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children:  [
-                        const SectionHeader(
-                          title: "Today's Recommendation",
-                          subtitle: 'Personalized for you',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: EdgeInsets.fromLTRB(horizontalPadding, isMobile ? 24 : 32, horizontalPadding, 0),
+                        child: SectionHeader(
+                          title: 'For You',
+                          subtitle: recipeProvider.recommendedRecipes.isEmpty
+                              ? 'Top-rated picks'
+                              : 'Based on your taste',
                         ),
-                        SizedBox(height: isMobile ? 14 : 20),
-                        if (_isLoading)
-                          const RecipeCardSkeleton(isHorizontal: true)
-                        else if (recipeProvider.dailySuggestion != null)
-                          DailySuggestionCard(
-                            recipe: recipeProvider.dailySuggestion!,
-                            onTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => RecipeDetailScreen(
-                                  recipe: recipeProvider.dailySuggestion!,
+                      ),
+                      SizedBox(height: isMobile ? 14 : 18),
+
+                      // ── Loading skeleton ────────────────────────────────────
+                      if (_isLoading || recipeProvider.isLoadingRecommendations)
+                        Padding(
+                          padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                          child: const RecipeCardSkeleton(isHorizontal: true),
+                        )
+
+                      // ── Swipeable hero cards (top 3) ────────────────────────
+                      else if (recipeProvider.recommendedRecipes.isNotEmpty) ...[
+                        SizedBox(
+                          height: isMobile ? 310 : 360,
+                          child: PageView.builder(
+                            controller: _recoPageController,
+                            itemCount: recipeProvider.recommendedRecipes.length.clamp(0, 5),
+                            onPageChanged: (i) => setState(() => _recoPage = i),
+                            itemBuilder: (context, index) {
+                              final recipe = recipeProvider.recommendedRecipes[index];
+                              return Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: horizontalPadding * 0.5,
+                                ),
+                                child: _buildHeroRecoCard(context, recipe),
+                              );
+                            },
+                          ),
+                        ),
+
+                        // ── Dot indicator ─────────────────────────────────────
+                        if (recipeProvider.recommendedRecipes.length > 1) ...[
+                          const SizedBox(height: 14),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: List.generate(
+                              recipeProvider.recommendedRecipes.length.clamp(0, 5),
+                              (i) => AnimatedContainer(
+                                duration: const Duration(milliseconds: 280),
+                                curve: Curves.easeInOut,
+                                margin: const EdgeInsets.symmetric(horizontal: 3),
+                                width: _recoPage == i ? 22 : 6,
+                                height: 6,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(3),
+                                  color: _recoPage == i
+                                      ? AppColors.primary
+                                      : AppColors.primary.withOpacity(0.25),
                                 ),
                               ),
                             ),
                           ),
+                        ],
+
+                        // ── More picks (landscape cards) ──────────────────────
+                        if (recipeProvider.recommendedRecipes.length > 5) ...[
+                          SizedBox(height: isMobile ? 22 : 26),
+                          Padding(
+                            padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                            child: Text(
+                              'More picks',
+                              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.2,
+                                color: isDark
+                                    ? AppColors.textSecondaryDark
+                                    : AppColors.textSecondaryLight,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            height: 110,
+                            child: ListView.builder(
+                              scrollDirection: Axis.horizontal,
+                              padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+                              itemCount: recipeProvider.recommendedRecipes.length - 5,
+                              itemBuilder: (context, index) {
+                                final recipe = recipeProvider.recommendedRecipes[index + 5];
+                                return GestureDetector(
+                                  onTap: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => RecipeDetailScreen(recipe: recipe),
+                                    ),
+                                  ),
+                                  child: _buildCompactLandscapeCard(context, recipe, isDark),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
                       ],
-                    ),
+                    ],
                   ),
                 ),
             
@@ -339,6 +420,329 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }  
   
+  // ── Swipeable full-width hero recommendation card ─────────────────────────
+  Widget _buildHeroRecoCard(BuildContext context, recipe) {
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => RecipeDetailScreen(recipe: recipe),
+        ),
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(28),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.primary.withOpacity(0.18),
+              blurRadius: 28,
+              offset: const Offset(0, 12),
+            ),
+            BoxShadow(
+              color: Colors.black.withOpacity(0.12),
+              blurRadius: 16,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // ── Background image ────────────────────────────────────────
+              Image.network(
+                recipe.imageUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  color: AppColors.surfaceDark,
+                  child: Icon(
+                    Icons.restaurant_rounded,
+                    size: 64,
+                    color: AppColors.primary.withOpacity(0.4),
+                  ),
+                ),
+              ),
+
+              // ── Bottom gradient ──────────────────────────────────────────
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      stops: const [0.0, 0.38, 1.0],
+                      colors: [
+                        Colors.black.withOpacity(0.08),
+                        Colors.transparent,
+                        Colors.black.withOpacity(0.88),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+              // ── Top row: cuisine badge + rating ──────────────────────────
+              Positioned(
+                top: 16,
+                left: 16,
+                right: 16,
+                child: Row(
+                  children: [
+                    _buildRecoGlassBadge(recipe.cuisine),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.93),
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.12),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.star_rounded, size: 15, color: Color(0xFFED6C02)),
+                          const SizedBox(width: 4),
+                          Text(
+                            recipe.rating.toStringAsFixed(1),
+                            style: const TextStyle(
+                              color: Color(0xFF121212),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // ── Bottom: title + meta + CTA ───────────────────────────────
+              Positioned(
+                bottom: 20,
+                left: 20,
+                right: 20,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      recipe.name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.4,
+                        height: 1.2,
+                        shadows: [
+                          Shadow(color: Colors.black54, blurRadius: 10),
+                        ],
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      recipe.description,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.82),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w400,
+                        height: 1.3,
+                        shadows: const [
+                          Shadow(color: Colors.black38, blurRadius: 6),
+                        ],
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        _buildRecoInfoPill(Icons.schedule_rounded, '${recipe.totalTime} min'),
+                        const SizedBox(width: 8),
+                        _buildRecoInfoPill(Icons.local_fire_department_rounded, '${recipe.calories} cal'),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
+                          decoration: BoxDecoration(
+                            gradient: AppColors.warmGradient,
+                            borderRadius: BorderRadius.circular(22),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppColors.primary.withOpacity(0.45),
+                                blurRadius: 14,
+                                offset: const Offset(0, 5),
+                              ),
+                            ],
+                          ),
+                          child: const Text(
+                            'Cook Now',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.2,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRecoGlassBadge(String text) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.28),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white.withOpacity(0.22)),
+          ),
+          child: Text(
+            text,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRecoInfoPill(IconData icon, String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.18),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withOpacity(0.28)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: Colors.white),
+          const SizedBox(width: 5),
+          Text(
+            text,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Compact landscape card (more picks row) ──────────────────────────────
+  Widget _buildCompactLandscapeCard(BuildContext context, recipe, bool isDark) {
+    return Container(
+      width: 280,
+      height: 110,
+      margin: const EdgeInsets.only(right: 14),
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.cardDark : Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.25 : 0.07),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Image
+          ClipRRect(
+            borderRadius: const BorderRadius.horizontal(left: Radius.circular(18)),
+            child: SizedBox(
+              width: 100,
+              height: double.infinity,
+              child: Image.network(
+                recipe.imageUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  color: AppColors.dividerLight,
+                  child: const Icon(Icons.restaurant_rounded, size: 28),
+                ),
+              ),
+            ),
+          ),
+          // Details
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    recipe.name,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      height: 1.25,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Row(
+                    children: [
+                      const Icon(Icons.star_rounded, size: 13, color: Color(0xFFED6C02)),
+                      const SizedBox(width: 3),
+                      Text(
+                        recipe.rating.toStringAsFixed(1),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: isDark ? Colors.white70 : AppColors.textSecondaryLight,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      const Icon(Icons.schedule_rounded, size: 12, color: AppColors.primary),
+                      const SizedBox(width: 3),
+                      Text(
+                        '${recipe.totalTime} min',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: isDark ? Colors.white54 : AppColors.textSecondaryLight,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildGeminiHeroCard(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     

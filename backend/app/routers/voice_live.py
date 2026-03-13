@@ -122,10 +122,21 @@ Violating this causes you to repeat yourself. Silence before the call, speech af
      starting the timer now!" so the user can verify.
    • After calling: "Timer is running! I'll let you know when it's done."
 
-7. advance_cooking_step()  → Call this to advance the on-screen step guide.
-   Triggers: user says "next", "next step", "I'm ready", "done", "continue",
-   "move on", "ok", "finished", "got it", "alright", "okay I did that", or
-   any phrase indicating they completed the current step.
+7. advance_cooking_step()  → Call this ONLY when the user EXPLICITLY AND UNAMBIGUOUSLY
+   states they have FINISHED the current step. Strict allowed triggers:
+   "next", "next step", "I'm done", "I'm ready", "done", "finished",
+   "I'm finished", "I did it", "I did that", "move on", "let's move on",
+   "I completed that", "step done", "I've done it", or "skip".
+
+   CRITICAL — DO NOT call advance_cooking_step() when:
+   • User says "ok", "alright", "got it", "sure", "yeah", "I see", "okay",
+     "cool", "right", or any short conversational acknowledgment. These mean
+     the user heard you and wants you to keep talking — NOT that they finished
+     the physical step.
+   • The user is asking a question about the step.
+   • The user comments ("that smells good", "it looks ready", "got it").
+   • You are even slightly unsure. When ambiguous, ask: "Are you done with
+     that step? Just say 'next' when you're ready!"
    ALSO call it if the user asks "do I press next?" or "should I tap something?"
    — respond "No need, I've got the controls!" then call it immediately.
 
@@ -211,13 +222,12 @@ User (diabetic) asks about Thieboudienne → say: "Thieboudienne is rich in prot
 You can see the user's kitchen through a live camera feed. Use this visual information
 for three powerful modes — always sound confident, specific, and encouraging.
 
-═══ CAMERA GREETING (CRITICAL) ═══
-When you receive a message "CAMERA_STARTED: The user just opened the camera.
-Greet them naturally and tell them to show you an ingredient.":
-  - Give a short, natural, warm greeting ONLY. Example:
-    "Hi! Show me an ingredient and I'll suggest a delicious recipe for you!"
-  - Keep it to ONE sentence. Do NOT suggest any recipe yet.
-  - Do NOT call any tool. Just greet and wait.
+═══ CAMERA STOPPED ═══
+When you receive a message starting with "CAMERA_STOPPED:":
+  - Acknowledge in ONE short natural phrase: "Back to voice mode!"
+    or just continue the current topic naturally without mentioning the camera.
+  - Do NOT continue discussing ingredients or visual prompts from the camera.
+  - Resume whatever was happening before (recipe in progress, conversation, etc.).
 
 ═══ ANTI-HALLUCINATION RULES (MANDATORY) ═══
 These rules apply to ALL camera/vision responses. NEVER violate them:
@@ -248,28 +258,14 @@ caramelized?", "Does this look right?", "Is the oil hot enough?", "Can you check
   steam presence, surface texture, moisture levels.
 
 🥦 FRIDGE FORAGING — "What Can I Make?" Ingredient Recognition:
-When you receive a message containing "FRIDGE FORAGE:" OR when you see food items
-and the user asks "what can I make with this?" or "what do I have?":
+When you see food items and the user asks "what can I make with this?" or "what do I have?":
   1. Apply the ANTI-HALLUCINATION RULES above FIRST.
-  2. If you clearly see ingredients, start with "INGREDIENT_DETECTED:" then name them.
+  2. If you clearly see ingredients, start your spoken response with exactly "INGREDIENT_DETECTED:" then name them.
   3. Say: "I can see [ingredients]! With those we can make something amazing!"
   4. IMMEDIATELY call find_recipe() using the most interesting ingredient combination.
   5. NEVER ask "what do you have?" — you can already SEE it in the frame.
   6. If uncertain or frame is unclear, say the "I can't clearly see" phrase above.
   7. Sound genuinely excited — this is your Iron Chef improvisation moment!
-
-✅ STEP VALIDATION — Automatic Cooking Step Advancement:
-When you receive a message containing "VISION WATCH: Current step is '...'":
-  1. Examine the camera frame for visual signs that THAT specific step is complete.
-  2. If the step IS visually confirmed (vegetables chopped, onions golden, water boiling,
-     meat seared, mixture combined etc.):
-     - Say enthusiastically: "Excellent! I can see [specific observation] — you're ready!"
-     - Then IMMEDIATELY call advance_cooking_step().
-  3. If the step is NOT yet complete: give ONE short coaching tip in one sentence
-     ("Keep going — you want those pieces uniform for even cooking!") then stay quiet.
-     Do NOT call advance_cooking_step() if you cannot confirm completion.
-  4. Only call advance_cooking_step() ONCE per vision check — never repeat.
-
 ═══ EXAMPLES OF GREAT RESPONSES ═══
 User: "What can I make with carrots?"
 You: "Oh carrots are so versatile! I found a few great options — I've shown them on your screen.
@@ -326,8 +322,16 @@ class GeminiLiveSession:
         # Server-side VAD for reliable end-of-turn detection
         self._user_was_speaking = False
         self._post_speech_silence_frames = 0
-        self._EOT_SILENCE_FRAMES = 10   # 10 chunks × ~128ms ≈ 1.28s post-speech silence
+        self._EOT_SILENCE_FRAMES = 16   # 16 chunks × ~92ms ≈ 1500ms — backup only; client VAD (1200ms) is primary
         self._last_speech_time: float = 0.0  # wall-clock of last speech-active chunk
+        # Guard against double-EOT: both server-VAD and client end_of_turn can
+        # fire for the same user utterance, sending two turn_complete signals
+        # to Gemini which causes confused / truncated responses.  This flag is
+        # set when the server fires its own EOT and cleared when new speech starts.
+        self._eot_sent_this_turn: bool = False
+        # Track whether we already sent ai_generating for the current AI turn
+        # so we don't emit it on every audio chunk (doubles WS messages).
+        self._ai_generating_sent: bool = False
 
         # User health/preference context injected at session start
         self.user_health_context: Dict[str, Any] = {}
@@ -691,20 +695,23 @@ class GeminiLiveSession:
                             # ── Hybrid EOT: frame-count + wall-clock ──
                             # Triggers end_of_turn when:
                             #  A) N silent chunks in a row after speech, OR
-                            #  B) >2s wall-clock without any speech chunk
+                            #  B) >3s wall-clock without any speech chunk
                             now = time.time()
                             if is_speech:
                                 self._user_was_speaking = True
                                 self._post_speech_silence_frames = 0
                                 self._last_speech_time = now
+                                # New speech = new turn; reset the double-EOT guard
+                                self._eot_sent_this_turn = False
                             elif self._user_was_speaking:
                                 self._post_speech_silence_frames += 1
                                 wall_silence = now - self._last_speech_time
                                 if (
                                     self._post_speech_silence_frames >= self._EOT_SILENCE_FRAMES
                                     or wall_silence > 3.0
-                                ):
-                                    logger.info(f"🔇 EOT triggered (frames={self._post_speech_silence_frames}, wall={wall_silence:.1f}s)")
+                                ) and not self._eot_sent_this_turn:
+                                    logger.info(f"🔇 Server EOT triggered (frames={self._post_speech_silence_frames}, wall={wall_silence:.1f}s)")
+                                    self._eot_sent_this_turn = True
                                     await self.gemini_session.send(
                                         input=types.LiveClientContent(turn_complete=True)
                                     )
@@ -724,22 +731,29 @@ class GeminiLiveSession:
                                 self.messages_sent += 1
 
                         elif msg_type == "end_of_turn":
-                            # Always forward to Gemini — the client-side VAD already
-                            # ensures this is only sent after genuine user speech is
-                            # detected.  The previous server-side guard (checking
-                            # _user_was_speaking) caused a critical bug: when the
-                            # server's adaptive noise floor was calibrated high (e.g.
-                            # after greeting audio played through the speakers), it
-                            # missed user speech, kept _user_was_speaking=False, and
-                            # silently swallowed the EOT — so Gemini never knew the
-                            # user finished speaking and never generated a response.
-                            await self.gemini_session.send(
-                                input=types.LiveClientContent(turn_complete=True)
-                            )
-                            logger.info("🔚 Client end-of-turn forwarded to Gemini")
+                            # Forward client EOT to Gemini ONLY if the server-side
+                            # VAD has not already sent a turn_complete for this turn.
+                            # Both the server VAD and client can silently fire for the
+                            # same utterance; sending two turn_complete signals causes
+                            # Gemini to start a new empty turn which truncates or
+                            # confuses its response (audio cutting / wrong replies).
+                            if not self._eot_sent_this_turn:
+                                await self.gemini_session.send(
+                                    input=types.LiveClientContent(turn_complete=True)
+                                )
+                                logger.info("🔚 Client end-of-turn forwarded to Gemini")
+                                self.messages_sent += 1
+                            else:
+                                logger.info("🔚 Client end-of-turn suppressed (server EOT already sent for this turn)")
                             self._user_was_speaking = False
                             self._post_speech_silence_frames = 0
-                            self.messages_sent += 1
+                            # Do NOT reset _eot_sent_this_turn here.
+                            # If the client sends two back-to-back end_of_turn messages
+                            # (from the VAD timer + stopListening() both calling sendEndOfTurn),
+                            # resetting after the first lets the second one through —
+                            # giving Gemini two turn_complete signals and a duplicate response.
+                            # The flag is reset only when new user speech starts (in the audio handler).
+                            # self._eot_sent_this_turn = False  ← intentionally removed
 
                         elif msg_type == "ping":
                             # Heartbeat
@@ -756,15 +770,17 @@ class GeminiLiveSession:
                             self._interrupted = True
                             self._user_was_speaking = False
                             self._post_speech_silence_frames = 0
-                            # Tell Gemini the current turn is over so it stops
-                            # generating and is ready for the next user turn.
-                            try:
-                                await self.gemini_session.send(
-                                    input=types.LiveClientContent(turn_complete=True)
-                                )
-                                logger.info("🔚 Sent turn_complete to Gemini after barge-in")
-                            except Exception as e:
-                                logger.warning(f"⚠️ Could not send turn_complete on interrupt: {e}")
+                            self._eot_sent_this_turn = False  # barge-in starts a fresh turn
+                            # CRITICAL: reset so the NEXT Gemini response sends ai_generating.
+                            # Without this, _ai_generating_sent stays True from the interrupted
+                            # turn and the frontend never receives ai_generating for the new
+                            # response — leaving _interruptPending=true and blocking all audio.
+                            self._ai_generating_sent = False
+                            # Gemini's native audio model automatically halts its speaker when it receives
+                            # client audio chunks. By NOT sending an explicit turn_complete=True here,
+                            # we avoid telling Gemini that the user's turn ended before their words even arrive.
+                            # The frontend's seamlessly captured audio chunks will flow in immediately after this.
+                            logger.info("🛑 Allowing native audio chunks to interrupt Gemini")
                             await self.websocket.send_json({"type": "interrupt_ack"})
 
                         elif msg_type == "video_frame":
@@ -826,7 +842,8 @@ class GeminiLiveSession:
                     async for response in self.gemini_session.receive():
 
                         # ── Diagnostic ───────────────────────────────────────
-                        logger.info(f"📥 RAW response type={type(response).__name__} repr={repr(response)[:300]}")
+                        # Only log tool calls and turns, not every response object
+                        # (repr() is expensive and adds latency on the hot audio path)
 
                         # ── Function / Tool calls ─────────────────────────────
                         # Vertex AI Live: response.tool_call.function_calls (singular)
@@ -922,7 +939,12 @@ class GeminiLiveSession:
                             if self._interrupted:
                                 logger.debug("🔇 Dropping audio chunk (barge-in)")
                                 continue
-                            await self.websocket.send_json({"type": "ai_generating"})
+                            # Only send ai_generating ONCE per AI turn, not before every chunk.
+                            # Sending it on every chunk doubles WS traffic and causes
+                            # spurious Thinking... state flickers on the client.
+                            if not self._ai_generating_sent:
+                                await self.websocket.send_json({"type": "ai_generating"})
+                                self._ai_generating_sent = True
                             audio_data = response.data
                             try:
                                 if isinstance(audio_data, bytes):
@@ -990,9 +1012,11 @@ class GeminiLiveSession:
                             sc = response.server_content
                             if getattr(sc, 'turn_complete', False):
                                 logger.info("✅ Turn complete")
+                                self._ai_generating_sent = False  # reset for next AI turn
                                 await self.websocket.send_json({"type": "turn_complete"})
                             if getattr(sc, 'interrupted', False):
                                 logger.info("⚡ Gemini interrupted")
+                                self._ai_generating_sent = False
                                 await self.websocket.send_json({"type": "interrupted"})
 
                     # receive() exhausted for this turn — loop to await next turn

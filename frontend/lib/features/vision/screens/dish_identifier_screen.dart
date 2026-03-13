@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:typed_data';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/services/api_service.dart';
 import '../../../core/models/recipe_model.dart';
 import '../../../core/widgets/recipe_cards.dart';
 import '../../recipes/screens/recipe_detail_screen.dart';
+import 'package:flutter/foundation.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class DishIdentifierScreen extends StatefulWidget {
   const DishIdentifierScreen({super.key});
@@ -24,6 +25,36 @@ class _DishIdentifierScreenState extends State<DishIdentifierScreen> {
   DishIdentifyResult? _result;
 
   Future<void> _pickImage(ImageSource source) async {
+    // ── Request permission on iOS/Android before accessing camera/photos ───
+    if (!kIsWeb) {
+      if (source == ImageSource.camera) {
+        final status = await Permission.camera.status;
+        if (status.isPermanentlyDenied) {
+          if (mounted) _showPermissionDenied('Camera');
+          return;
+        }
+        if (status.isDenied) {
+          final result = await Permission.camera.request();
+          if (!result.isGranted) {
+            if (mounted) _showPermissionDenied('Camera');
+            return;
+          }
+        }
+      } else {
+        // Gallery — needs photo library permission
+        final status = await Permission.photos.status;
+        if (status.isPermanentlyDenied) {
+          if (mounted) _showPermissionDenied('Photo Library');
+          return;
+        }
+        if (status.isDenied) {
+          await Permission.photos.request();
+          // image_picker shows its own UI; we let it proceed even if isDenied
+          // (Android doesn't need this at all; iOS grants partial access)
+        }
+      }
+    }
+
     try {
       final file = await _picker.pickImage(
         source: source,
@@ -42,8 +73,34 @@ class _DishIdentifierScreenState extends State<DishIdentifierScreen> {
 
       await _analyze(bytes);
     } catch (e) {
-      setState(() => _error = 'Could not open camera/gallery: $e');
+      if (mounted) setState(() => _error = 'Could not open camera/gallery. Please try again.');
     }
+  }
+
+  void _showPermissionDenied(String name) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('$name Access Required'),
+        content: Text(
+          'Cuisinée needs $name access. '
+          'Please go to Settings and allow access.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              openAppSettings();
+            },
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _analyze(Uint8List bytes) async {

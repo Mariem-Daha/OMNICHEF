@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
     Deploy Cuisinee backend to Google Cloud Run.
@@ -33,19 +33,19 @@
 param(
     [string]$ProjectId    = "",
     [string]$Region       = "us-central1",
-    [string]$ServiceName  = "cuisinee-backend",
+    [string]$ServiceName  = "omnichef-backend",
     [switch]$UseCloudBuild
 )
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 function Info  { param($m) Write-Host "  [INFO]  $m" -ForegroundColor Cyan   }
 function Ok    { param($m) Write-Host "  [ OK ]  $m" -ForegroundColor Green  }
 function Warn  { param($m) Write-Host "  [WARN]  $m" -ForegroundColor Yellow }
 function Fail  { param($m) Write-Host "  [FAIL]  $m" -ForegroundColor Red; exit 1 }
-function Step  { param($m) Write-Host "`n━━━  $m" -ForegroundColor White }
+function Step  { param($m) Write-Host "`n---  $m" -ForegroundColor White }
 
 function Require-Command($cmd) {
     if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
@@ -54,11 +54,13 @@ function Require-Command($cmd) {
 }
 
 # ─── Locate workspace root ───────────────────────────────────────────────────
-$ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
-$WorkspaceRoot = Split-Path -Parent $ScriptDir   # workspace root (cuisinee/)
-$BackendDir = Join-Path $WorkspaceRoot "backend"
-$EnvFile    = Join-Path $BackendDir ".env"
-$CredFile   = Join-Path $WorkspaceRoot "gcp-service-account.json"
+# deploy.ps1 lives IN the workspace root (cuisinee/), so the workspace root
+# IS the script's directory — NOT its parent.
+$ScriptDir     = Split-Path -Parent $MyInvocation.MyCommand.Path
+$WorkspaceRoot = $ScriptDir
+$BackendDir    = Join-Path $WorkspaceRoot "backend"
+$EnvFile       = Join-Path $BackendDir ".env"
+$CredFile      = Join-Path $WorkspaceRoot "gcp-service-account.json"
 
 # ─── Prerequisites ────────────────────────────────────────────────────────────
 Step "Checking prerequisites"
@@ -88,7 +90,7 @@ Info "Region   : $Region"
 Info "Service  : $ServiceName"
 
 # Set the active project
-gcloud config set project $ProjectId --quiet
+gcloud config set project $ProjectId --quiet 2>$null
 
 # ─── Read .env values ─────────────────────────────────────────────────────────
 Step "Reading backend/.env"
@@ -166,7 +168,7 @@ if ($UseCloudBuild) {
     Step "Building image with Cloud Build"
     gcloud builds submit $WorkspaceRoot `
         --config "$WorkspaceRoot/cloudbuild.yaml" `
-        --substitutions "_SERVICE_NAME=$ServiceName,_REGION=$Region" `
+        --substitutions "_SERVICE_NAME=$ServiceName,_REGION=$Region,_IMAGE_TAG=$gitSha" `
         --project $ProjectId
     Ok "Cloud Build finished."
 } else {
@@ -187,17 +189,18 @@ if ($UseCloudBuild) {
 # ─── Build env-vars string for gcloud ────────────────────────────────────────
 Step "Preparing Cloud Run environment variables"
 
-# Merge .env values + deploy-time overrides
+# Merge .env values + deploy-time overrides (PS 5.1 compatible — no ?? operator)
+function Get-EnvVar { param($key, $default="") if ($envVars.ContainsKey($key) -and $envVars[$key]) { return $envVars[$key] } return $default }
 $runEnv = @{
-    DATABASE_URL                 = $envVars["DATABASE_URL"]  ?? ""
-    SECRET_KEY                   = $envVars["SECRET_KEY"]    ?? "cuisinee-secret-$(Get-Random)"
+    DATABASE_URL                 = Get-EnvVar "DATABASE_URL"
+    SECRET_KEY                   = Get-EnvVar "SECRET_KEY" "cuisinee-secret-$(Get-Random)"
     ALGORITHM                    = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES  = "1440"
     ALLOWED_ORIGINS              = "*"
-    GEMINI_API_KEY               = $envVars["GEMINI_API_KEY"] ?? ""
+    GEMINI_API_KEY               = Get-EnvVar "GEMINI_API_KEY"
     VERTEX_PROJECT_ID            = $ProjectId
     VERTEX_LOCATION              = $Region
-    SEARCH_ENGINE_ID             = $envVars["SEARCH_ENGINE_ID"] ?? ""
+    SEARCH_ENGINE_ID             = Get-EnvVar "SEARCH_ENGINE_ID"
 }
 if ($credB64) {
     $runEnv["GOOGLE_CREDENTIALS_JSON"] = $credB64

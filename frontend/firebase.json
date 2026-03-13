@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "site": "cuisinee-app",
+    "site": "omnichef-app",
     "public": "build/web",
     "ignore": [
       "firebase.json",
@@ -14,6 +14,23 @@
       }
     ],
     "headers": [
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "Permissions-Policy",
+            "value": "microphone=(self), camera=(self)"
+          },
+          {
+            "key": "X-Content-Type-Options",
+            "value": "nosniff"
+          },
+          {
+            "key": "X-Frame-Options",
+            "value": "SAMEORIGIN"
+          }
+        ]
+      },
       {
         "source": "**/*.@(js|css)",
         "headers": [

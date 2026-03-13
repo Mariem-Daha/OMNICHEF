@@ -6,6 +6,7 @@ import '../../../core/widgets/chips.dart';
 import '../../../core/providers/user_provider.dart';
 import 'package:provider/provider.dart';
 import '../../navigation/main_navigation.dart';
+import '../../onboarding/screens/preference_quiz_screen.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -99,8 +100,8 @@ class _SignupScreenState extends State<SignupScreen> {
         Navigator.pushAndRemoveUntil(
           context,
           PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) => 
-                const MainNavigation(),
+            pageBuilder: (context, animation, secondaryAnimation) =>
+                const PreferenceQuizScreen(),
             transitionsBuilder: (context, animation, secondaryAnimation, child) {
               return FadeTransition(opacity: animation, child: child);
             },

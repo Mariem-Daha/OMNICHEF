@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/recipe_model.dart';
 import '../services/api_service.dart';
-import '../data/dummy_recipes.dart';
 class RecipeProvider extends ChangeNotifier {
   final ApiService _api = ApiService();
   
@@ -11,6 +10,8 @@ class RecipeProvider extends ChangeNotifier {
   List<Recipe> _globalRecipes = [];
   List<Recipe> _savedRecipes = [];
   List<Recipe> _recentRecipes = [];
+  List<Recipe> _recommendedRecipes = [];
+  bool _isLoadingRecommendations = false;
   List<String> _selectedHealthFilters = [];
   List<String> _leftoverIngredients = [];
   bool _isLoading = false;
@@ -35,6 +36,8 @@ class RecipeProvider extends ChangeNotifier {
   List<Recipe> get globalRecipes => _globalRecipes;
   List<Recipe> get savedRecipes => _savedRecipes;
   List<Recipe> get recentRecipes => _recentRecipes;
+  List<Recipe> get recommendedRecipes => _recommendedRecipes;
+  bool get isLoadingRecommendations => _isLoadingRecommendations;
   List<String> get selectedHealthFilters => _selectedHealthFilters;
   List<String> get leftoverIngredients => _leftoverIngredients;
   bool get isLoading => _isLoading || _isLoadingMauritanian || _isLoadingMena;
@@ -130,41 +133,29 @@ class RecipeProvider extends ChangeNotifier {
     }
   }
 
-  Recipe? get dailySuggestion {
-    return Recipe(
-      id: 'daily_perfect_dish',
-      name: 'Wagyu Beef Medallions',
-      description: 'Melt-in-your-mouth Wagyu beef medallions seared to perfection, served with a rich red wine reduction and truffle mash.',
-      imageUrl: 'https://images.unsplash.com/photo-1600891964092-4316c288032e?w=1200&q=100', // Premium Steak Photo
-      cuisine: 'French',
-      prepTime: 45,
-      cookTime: 90,
-      servings: 4,
-      calories: 850,
-      tags: ['Premium', 'High Protein', 'Glazed', 'Mouth-watering'],
-      ingredients: [
-        '1 premium lamb crown roast (about 2 lbs)',
-        '2 tbsp Ras el Hanout (Moroccan spice blend)',
-        '3 tbsp extra virgin olive oil',
-        '1/2 cup pomegranate molasses',
-        'Fresh mint and cilantro for garnish'
-      ],
-      steps: [
-        RecipeStep(stepNumber: 1, instruction: 'Preheat oven to 375°F. Rub the roast with olive oil and spices.', durationMinutes: 10),
-        RecipeStep(stepNumber: 2, instruction: 'Roast for 60 minutes, brushing with pomegranate molasses every 20 minutes.', durationMinutes: 60),
-        RecipeStep(stepNumber: 3, instruction: 'Rest for 15 minutes before carving.', durationMinutes: 15),
-      ],
-      nutrition: NutritionInfo(
-        calories: 850,
-        protein: 45.0,
-        carbs: 12.0,
-        fat: 65.0,
-        fiber: 2.0,
-        sodium: 450.0,
-        sugar: 8.0,
-      ),
-      difficulty: 'Hard',
-    );
+  Recipe? get dailySuggestion => _recommendedRecipes.isNotEmpty ? _recommendedRecipes.first : null;
+
+  /// Load personalised recommendations for the given user preferences.
+  Future<void> loadRecommendations({
+    List<String> preferences = const [],
+    List<String> allergies = const [],
+    List<String> disliked = const [],
+  }) async {
+    _isLoadingRecommendations = true;
+    notifyListeners();
+    try {
+      _recommendedRecipes = await _api.getRecommendations(
+        preferences: preferences,
+        allergies: allergies,
+        disliked: disliked,
+        limit: 10,
+      );
+    } catch (e) {
+      debugPrint('Failed to load recommendations: $e');
+    } finally {
+      _isLoadingRecommendations = false;
+      notifyListeners();
+    }
   }
 
   /// Load Mauritanian recipes from API.
