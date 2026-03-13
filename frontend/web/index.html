@@ -1,5 +1,6 @@
 ﻿<!DOCTYPE html>
 <html>
+
 <head>
   <!--
     If you are serving your web app in a path other than the root, change the
@@ -32,18 +33,30 @@
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png"/>
+  <link rel="icon" type="image/png" href="favicon.png" />
 
   <title>Cuisinee</title>
   <link rel="manifest" href="manifest.json">
   <style>
     /* Ensure full-screen camera preview fills viewport on iPhone Safari */
-    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+
     /* Flutter canvas: fill entire viewport including safe-area notch */
-    flt-glass-pane, flt-scene, flt-scene-host, canvas {
+    flt-glass-pane,
+    flt-scene,
+    flt-scene-host,
+    canvas {
       width: 100% !important;
       height: 100% !important;
     }
+
     /* Camera <video> elements: cover mode, no distortion */
     video {
       object-fit: cover !important;
@@ -52,6 +65,7 @@
     }
   </style>
 </head>
+
 <body>
   <!--
     iOS Safari Audio Unlock
@@ -62,7 +76,7 @@
     to tap again.
   -->
   <script>
-    (function() {
+    (function () {
       var _audioUnlocked = false;
       function _unlockAudio() {
         if (_audioUnlocked) return;
@@ -70,7 +84,7 @@
 
         // 1. Unlock HTML5 <audio> (used by audioplayers_web / BytesSource)
         var silent = new Audio();
-        silent.play().catch(function() {});
+        silent.play().catch(function () { });
 
         // 2. Pre-warm / unlock the CuisineeAudio playback context.
         //    On iOS, an AudioContext must be created AND have audio scheduled
@@ -81,20 +95,20 @@
         if (!AC) return;
 
         function _warmContext(ctx) {
-          if (ctx.state === 'suspended') ctx.resume().catch(function(){});
+          if (ctx.state === 'suspended') ctx.resume().catch(function () { });
           try {
             var buf = ctx.createBuffer(1, 1, ctx.sampleRate || 24000);
             var src = ctx.createBufferSource();
             src.buffer = buf;
             src.connect(ctx.destination);
             src.start(0);
-          } catch(e) {}
+          } catch (e) { }
         }
 
         if (window.CuisineeAudio) {
           // Flutter already loaded — pre-create the playback context in this gesture.
           if (!window.CuisineeAudio._playCtx ||
-              window.CuisineeAudio._playCtx.state === 'closed') {
+            window.CuisineeAudio._playCtx.state === 'closed') {
             window.CuisineeAudio._playCtx = new AC({ sampleRate: 24000 });
             window.CuisineeAudio._playTime = 0;
             window.CuisineeAudio._gainNode = null;
@@ -105,13 +119,13 @@
           // and schedule a retry so CuisineeAudio gets warmed once available.
           var tmpCtx = new AC();
           _warmContext(tmpCtx);
-          setTimeout(function() { try { tmpCtx.close(); } catch(e) {} }, 1000);
+          setTimeout(function () { try { tmpCtx.close(); } catch (e) { } }, 1000);
           // Retry warming CuisineeAudio up to 5 times (covers slow-loading pages).
           var retries = 0;
           function _retryCuisineeWarm() {
             if (window.CuisineeAudio) {
               if (!window.CuisineeAudio._playCtx ||
-                  window.CuisineeAudio._playCtx.state === 'closed') {
+                window.CuisineeAudio._playCtx.state === 'closed') {
                 window.CuisineeAudio._playCtx = new AC({ sampleRate: 24000 });
                 window.CuisineeAudio._playTime = 0;
                 window.CuisineeAudio._gainNode = null;
@@ -119,7 +133,7 @@
               // Note: resume() here is outside a gesture but the context was
               // pre-registered; on iOS 14.5+ resume() works without a gesture
               // once the page has been interacted with.
-              window.CuisineeAudio._playCtx.resume().catch(function(){});
+              window.CuisineeAudio._playCtx.resume().catch(function () { });
             } else if (++retries < 5) {
               setTimeout(_retryCuisineeWarm, 500);
             }
@@ -127,22 +141,22 @@
           setTimeout(_retryCuisineeWarm, 200);
         }
 
-        document.removeEventListener('touchstart',  _unlockAudio, true);
-        document.removeEventListener('touchend',    _unlockAudio, true);
+        document.removeEventListener('touchstart', _unlockAudio, true);
+        document.removeEventListener('touchend', _unlockAudio, true);
         document.removeEventListener('pointerdown', _unlockAudio, true);
-        document.removeEventListener('click',       _unlockAudio, true);
+        document.removeEventListener('click', _unlockAudio, true);
       }
-      document.addEventListener('touchstart',  _unlockAudio, true);
-      document.addEventListener('touchend',    _unlockAudio, true);
+      document.addEventListener('touchstart', _unlockAudio, true);
+      document.addEventListener('touchend', _unlockAudio, true);
       document.addEventListener('pointerdown', _unlockAudio, true);
-      document.addEventListener('click',       _unlockAudio, true);
+      document.addEventListener('click', _unlockAudio, true);
 
       // Persistent re-resume: covers iOS returning from sleep or tab-switch
       // (the OS suspends AudioContexts when the page loses focus).
       function _reResumeAudio() {
         var ca = window.CuisineeAudio;
         if (ca && ca._playCtx && ca._playCtx.state === 'suspended') {
-          ca._playCtx.resume().catch(function() {});
+          ca._playCtx.resume().catch(function () { });
         }
       }
       document.addEventListener('touchstart', _reResumeAudio, { passive: true });
@@ -156,14 +170,12 @@
        - All Dartâ†”JS comms use window.postMessage (no allowInterop needed)
   â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
   <script>
-    // AEC interceptor: force echo-cancellation on every getUserMedia call so the
-    // Flutter 
-ecord package always gets hardware AEC, preventing AI speaker
+    // Flutter record package always gets hardware AEC, preventing AI speaker
     // output from feeding back into the mic (echo / self-hearing issue).
-    (function() {
+    (function () {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
       var _origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-      navigator.mediaDevices.getUserMedia = function(constraints) {
+      navigator.mediaDevices.getUserMedia = function (constraints) {
         try {
           if (constraints && constraints.audio) {
             var aec = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
@@ -173,7 +185,7 @@ ecord package always gets hardware AEC, preventing AI speaker
               constraints = Object.assign({}, constraints, { audio: Object.assign({}, aec, constraints.audio) });
             }
           }
-        } catch(e) {}
+        } catch (e) { }
         return _origGUM(constraints);
       };
     })();
@@ -181,16 +193,16 @@ ecord package always gets hardware AEC, preventing AI speaker
   <script>
     window.CuisineeAudio = {
       // â”€â”€ internal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      _micCtx:    null,
+      _micCtx: null,
       _micStream: null,
       _processor: null,
 
-      _playCtx:     null,
-      _playTime:    0,
+      _playCtx: null,
+      _playTime: 0,
       _interrupted: false,
-      _isSpeaking:  false,
+      _isSpeaking: false,
       _silenceTimer: null,
-      _chunkCount:  0,   // counts chunks in current turn (0 = first chunk)
+      _chunkCount: 0,   // counts chunks in current turn (0 = first chunk)
 
       _SPEECH_THRESHOLD: 0.01,  // float32 RMS threshold for VAD (raised to reject ambient noise)
 
@@ -216,12 +228,12 @@ ecord package always gets hardware AEC, preventing AI speaker
 
           this._micStream = stream;
           this._micCtx = new (window.AudioContext || window.webkitAudioContext)();
-          const nativeRate   = this._micCtx.sampleRate;
-          const targetRate   = 16000;
-          const downRatio    = nativeRate / targetRate;
+          const nativeRate = this._micCtx.sampleRate;
+          const targetRate = 16000;
+          const downRatio = nativeRate / targetRate;
 
-          const source    = this._micCtx.createMediaStreamSource(stream);
-          const bufSize   = 4096;
+          const source = this._micCtx.createMediaStreamSource(stream);
+          const bufSize = 4096;
           this._processor = this._micCtx.createScriptProcessor(bufSize, 1, 1);
 
           let wasSpeaking = false;
@@ -241,7 +253,7 @@ ecord package always gets hardware AEC, preventing AI speaker
 
             // Downsample to 16 kHz
             const outLen = Math.round(input.length / downRatio);
-            const out    = new Float32Array(outLen);
+            const out = new Float32Array(outLen);
             for (let i = 0; i < outLen; i++) out[i] = input[Math.round(i * downRatio)];
 
             // Float32 â†’ Int16 PCM
@@ -272,9 +284,9 @@ ecord package always gets hardware AEC, preventing AI speaker
       },
 
       stopMic() {
-        if (this._processor)  { this._processor.disconnect(); this._processor = null; }
-        if (this._micStream)  { this._micStream.getTracks().forEach(t => t.stop()); this._micStream = null; }
-        if (this._micCtx)     { try { this._micCtx.close(); } catch(_) {} this._micCtx = null; }
+        if (this._processor) { this._processor.disconnect(); this._processor = null; }
+        if (this._micStream) { this._micStream.getTracks().forEach(t => t.stop()); this._micStream = null; }
+        if (this._micCtx) { try { this._micCtx.close(); } catch (_) { } this._micCtx = null; }
         console.log('[CuisineeAudio] Mic stopped');
       },
 
@@ -284,11 +296,14 @@ ecord package always gets hardware AEC, preventing AI speaker
         if (this._interrupted) return;
 
         if (!this._playCtx || this._playCtx.state === 'closed') {
-          this._playCtx  = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+          this._playCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
           this._playTime = 0;
           this._chunkCount = 0;
           this._gainNode = null;  // reset so it's recreated for the new context
         }
+
+        this._activeSources = this._activeSources || [];
+
         // Mark speaking immediately — BEFORE any async work.
         // onTurnPlaybackDone in Dart checks isSpeaking() right after turn_complete
         // arrives; if we set _isSpeaking only after await resume(), there is a
@@ -299,7 +314,7 @@ ecord package always gets hardware AEC, preventing AI speaker
         // Await resume() so buffers are only scheduled on a running context —
         // without this, src.start() is silently ignored on iOS Safari/Chrome.
         if (this._playCtx.state === 'suspended') {
-          try { await this._playCtx.resume(); } catch(_) {}
+          try { await this._playCtx.resume(); } catch (_) { }
         }
 
         // Route all audio through a shared GainNode.  interrupt() zeros it
@@ -310,15 +325,32 @@ ecord package always gets hardware AEC, preventing AI speaker
         }
 
         try {
-          const bin  = atob(base64);
-          const u8   = new Uint8Array(bin.length);
+          const bin = atob(base64);
+          const u8 = new Uint8Array(bin.length);
           for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
 
-          const int16   = new Int16Array(u8.buffer);
-          const float32 = new Float32Array(int16.length);
+          const int16 = new Int16Array(u8.buffer);
+          let float32 = new Float32Array(int16.length);
           for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 32768.0;
 
-          const buf = this._playCtx.createBuffer(1, float32.length, 24000);
+          // Safari iOS relies on the context's target rate. Creating a 24000 Hz buffer
+          // on a 44100/48000 Hz context can result in static/noise or speed issues.
+          const targetRate = this._playCtx.sampleRate;
+          if (targetRate && targetRate !== 24000) {
+            const ratio = 24000 / targetRate;
+            const newLen = Math.floor(float32.length / ratio);
+            const resampled = new Float32Array(newLen);
+            for (let i = 0; i < newLen; i++) {
+              const srcIdx = i * ratio;
+              const idx1 = Math.floor(srcIdx);
+              const idx2 = Math.min(idx1 + 1, float32.length - 1);
+              const frac = srcIdx - idx1;
+              resampled[i] = float32[idx1] * (1 - frac) + float32[idx2] * frac;
+            }
+            float32 = resampled;
+          }
+
+          const buf = this._playCtx.createBuffer(1, float32.length, targetRate || 24000);
           buf.copyToChannel(float32, 0);
 
           const src = this._playCtx.createBufferSource();
@@ -331,8 +363,15 @@ ecord package always gets hardware AEC, preventing AI speaker
           // buffer before it's due to play.  Subsequent chunks chain tightly.
           const isFirst = (this._chunkCount === 0);
           const minLead = isFirst ? 0.15 : 0.02;
-          const start   = (this._playTime < now + minLead) ? now + minLead : this._playTime;
+          const start = (this._playTime < now + minLead) ? now + minLead : this._playTime;
           src.start(start);
+
+          this._activeSources.push(src);
+          src.onended = () => {
+            const idx = this._activeSources.indexOf(src);
+            if (idx !== -1) this._activeSources.splice(idx, 1);
+          };
+
           this._playTime = start + buf.duration;
           this._chunkCount++;
           this._isSpeaking = true;
@@ -360,9 +399,17 @@ ecord package always gets hardware AEC, preventing AI speaker
 
       interrupt() {
         this._interrupted = true;
-        this._isSpeaking  = false;
-        this._playTime    = 0;
-        this._chunkCount  = 0;
+        this._isSpeaking = false;
+        this._playTime = 0;
+        this._chunkCount = 0;
+
+        if (this._activeSources && this._activeSources.length > 0) {
+          this._activeSources.forEach(src => {
+            try { src.stop(); src.disconnect(); } catch (_) { }
+          });
+          this._activeSources = [];
+        }
+
         // Orphan the current GainNode by disconnecting it from the destination.
         // All old scheduled AudioBufferSourceNodes remain wired to the orphaned
         // node and produce no output — they drain silently without affecting the
@@ -371,12 +418,18 @@ ecord package always gets hardware AEC, preventing AI speaker
         // muted-then-unmuted GainNode let scheduled sources replay at full
         // volume 400 ms after the barge-in.
         if (this._gainNode && this._playCtx) {
-          try { this._gainNode.disconnect(); } catch(_) {}
+          try { this._gainNode.disconnect(); } catch (_) { }
         }
         this._gainNode = null;  // force recreation for next turn
+
+        if (this._silenceTimer) {
+          clearTimeout(this._silenceTimer);
+          this._silenceTimer = null;
+        }
+
         setTimeout(() => {
           this._interrupted = false;
-          this._chunkCount  = 0;  // next turn starts fresh
+          this._chunkCount = 0;  // next turn starts fresh
         }, 400);
       },
 
@@ -387,11 +440,12 @@ ecord package always gets hardware AEC, preventing AI speaker
 
       async resumePlayback() {
         if (this._playCtx && this._playCtx.state === 'suspended') {
-          try { await this._playCtx.resume(); } catch(_) {}
+          try { await this._playCtx.resume(); } catch (_) { }
         }
       }
     };
   </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
+
 </html>

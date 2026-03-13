@@ -765,22 +765,40 @@ class GeminiLiveSession:
                             logger.info(f"🔄 User context updated mid-session: {list(data.keys())}")
 
                         elif msg_type == "interrupt":
-                            # ── True Barge-In ──────────────────────────────
-                            logger.info("⚡ Barge-in: user interrupted AI speech")
+                            # ── Barge-In ──────────────────────────────────
+                            # Capture whether Gemini was mid-generation BEFORE resetting the flag.
+                            was_generating = self._ai_generating_sent
+                            logger.info(f"⚡ Barge-in: user interrupted AI speech (was_generating={was_generating})")
+
                             self._interrupted = True
                             self._user_was_speaking = False
                             self._post_speech_silence_frames = 0
                             self._eot_sent_this_turn = False  # barge-in starts a fresh turn
-                            # CRITICAL: reset so the NEXT Gemini response sends ai_generating.
-                            # Without this, _ai_generating_sent stays True from the interrupted
-                            # turn and the frontend never receives ai_generating for the new
-                            # response — leaving _interruptPending=true and blocking all audio.
                             self._ai_generating_sent = False
-                            # Gemini's native audio model automatically halts its speaker when it receives
-                            # client audio chunks. By NOT sending an explicit turn_complete=True here,
-                            # we avoid telling Gemini that the user's turn ended before their words even arrive.
-                            # The frontend's seamlessly captured audio chunks will flow in immediately after this.
-                            logger.info("🛑 Allowing native audio chunks to interrupt Gemini")
+
+                            # Do NOT send any raw WebSocket signal to Gemini here.
+                            #
+                            # Case 1 — mid-generation barge-in (was_generating=True):
+                            #   Gemini's built-in VAD detects user voice in the realtime_input
+                            #   audio stream and interrupts itself, sending back an 'interrupted'
+                            #   message.  No explicit signal from us is needed or correct.
+                            #
+                            # Case 2 — post-generation barge-in (was_generating=False):
+                            #   Gemini already sent turn_complete; generation is done.  The user
+                            #   is only interrupting local audio playback on the frontend.
+                            #   Sending {"client_content": {"turn_complete": false}} here puts
+                            #   Gemini into a "waiting for more client_content" state with no
+                            #   matching turn_complete=true ever arriving, causing the session
+                            #   to time out and drop ~14 s later.
+                            #
+                            # In both cases the correct action is: just set _interrupted=True
+                            # (so stale in-flight audio chunks are dropped), then let the
+                            # incoming user audio flow to Gemini via realtime_input as normal.
+                            if was_generating:
+                                logger.info("🎛️ Mid-generation barge-in — Gemini VAD will handle it via audio stream")
+                            else:
+                                logger.info("🎛️ Post-generation barge-in — playback-only interrupt, session stays alive")
+
                             await self.websocket.send_json({"type": "interrupt_ack"})
 
                         elif msg_type == "video_frame":
@@ -1022,6 +1040,12 @@ class GeminiLiveSession:
                     # receive() exhausted for this turn — loop to await next turn
                     logger.info("🔄 receive() ended — ready for next user turn")
 
+                except websockets.exceptions.ConnectionClosedOK as cls_err:
+                    logger.info("🔌 Gemini session closed gracefully by server (1000 OK)")
+                    if self.is_active:
+                        self.is_active = False
+                    break
+                
                 except RuntimeError as rte:
                     if "disconnect" in str(rte).lower():
                         logger.info("🔌 Gemini session disconnected (RuntimeError)")
