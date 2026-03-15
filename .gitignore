@@ -54,6 +54,8 @@ __pycache__/
 # Secrets / credentials
 *.json.key
 gcp-service-account.json
+ornate-lead-*.json
+*-[hex12].json
 *-credentials.json
 *service-account*.json
 *.p12
