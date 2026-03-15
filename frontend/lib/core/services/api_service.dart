@@ -11,7 +11,7 @@ class ApiService {
   // Default to production Cloud Run backend
   static const String _baseUrl = String.fromEnvironment(
     'API_URL',
-    defaultValue: 'http://localhost:8000/api',
+    defaultValue: 'https://omnichef-backend-684753541076.us-central1.run.app/api',
   );
 
   /// Exposed for WebSocket consumers that need to derive wss:// URLs.

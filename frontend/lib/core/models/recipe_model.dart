@@ -90,7 +90,7 @@ class Recipe {
   // Backend base URL (same dart-define used by ApiService).
   static const String _backendBase = String.fromEnvironment(
     'API_URL',
-    defaultValue: 'http://localhost:8000/api',
+    defaultValue: 'https://omnichef-backend-684753541076.us-central1.run.app/api',
   );
 
   /// Rewrite an external image URL through the backend proxy so that
