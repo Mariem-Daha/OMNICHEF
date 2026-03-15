@@ -110,6 +110,17 @@ if (Test-Path $EnvFile) {
     Warn ".env not found at $EnvFile — using defaults only"
 }
 
+# ─── Resolve credential file path (from .env or fallback) ────────────────────
+$credFromEnv = if ($envVars.ContainsKey("GOOGLE_APPLICATION_CREDENTIALS")) { $envVars["GOOGLE_APPLICATION_CREDENTIALS"] } else { "" }
+$CredFile = if ($credFromEnv -and (Test-Path $credFromEnv)) {
+    Info "Using credential file from GOOGLE_APPLICATION_CREDENTIALS: $credFromEnv"
+    $credFromEnv
+} elseif ($env:GOOGLE_CREDENTIALS_FILE -and (Test-Path $env:GOOGLE_CREDENTIALS_FILE)) {
+    $env:GOOGLE_CREDENTIALS_FILE
+} else {
+    Join-Path $WorkspaceRoot "gcp-service-account.json"
+}
+
 # ─── Encode service-account credentials ──────────────────────────────────────
 Step "Encoding GCP service-account credentials"
 $credB64 = ""
@@ -201,6 +212,7 @@ $runEnv = @{
     VERTEX_PROJECT_ID            = $ProjectId
     VERTEX_LOCATION              = $Region
     SEARCH_ENGINE_ID             = Get-EnvVar "SEARCH_ENGINE_ID"
+    SPOONACULAR_API_KEY          = Get-EnvVar "SPOONACULAR_API_KEY"
 }
 if ($credB64) {
     $runEnv["GOOGLE_CREDENTIALS_JSON"] = $credB64
