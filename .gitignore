@@ -55,7 +55,7 @@ __pycache__/
 *.json.key
 gcp-service-account.json
 ornate-lead-*.json
-*-[hex12].json
+*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].json
 *-credentials.json
 *service-account*.json
 *.p12
