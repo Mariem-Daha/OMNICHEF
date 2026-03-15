@@ -482,17 +482,27 @@ class _PreferenceQuizScreenState extends State<PreferenceQuizScreen>
             ),
           ),
           const SizedBox(height: 20),
-          // Chips
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: options.map((opt) => _AnimatedChip(
-              emoji: opt.emoji,
-              label: opt.label,
-              description: opt.description,
-              isSelected: selected.contains(opt.label),
-              onTap: () => onToggle(opt.label),
-            )).toList(),
+          // Chips — 2-column grid
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              childAspectRatio: 2.4,
+            ),
+            itemCount: options.length,
+            itemBuilder: (_, i) {
+              final opt = options[i];
+              return _AnimatedChip(
+                emoji: opt.emoji,
+                label: opt.label,
+                description: opt.description,
+                isSelected: selected.contains(opt.label),
+                onTap: () => onToggle(opt.label),
+              );
+            },
           ),
         ],
       ),
@@ -668,39 +678,46 @@ class _AnimatedChipState extends State<_AnimatedChip>
                 : [],
           ),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisSize: MainAxisSize.max,
             children: [
               Text(widget.emoji, style: const TextStyle(fontSize: 18)),
-              const SizedBox(width: 10),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.label,
-                    style: TextStyle(
-                      color: widget.isSelected
-                          ? AppColors.primary
-                          : Colors.white.withOpacity(0.85),
-                      fontSize: 14,
-                      fontWeight: widget.isSelected
-                          ? FontWeight.w600
-                          : FontWeight.w500,
-                      letterSpacing: 0.1,
-                    ),
-                  ),
-                  if (widget.description.isNotEmpty) ...[
-                    const SizedBox(height: 2),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
                     Text(
-                      widget.description,
+                      widget.label,
                       style: TextStyle(
                         color: widget.isSelected
-                            ? AppColors.primary.withOpacity(0.65)
-                            : Colors.white.withOpacity(0.32),
-                        fontSize: 11,
+                            ? AppColors.primary
+                            : Colors.white.withOpacity(0.85),
+                        fontSize: 13,
+                        fontWeight: widget.isSelected
+                            ? FontWeight.w600
+                            : FontWeight.w500,
+                        letterSpacing: 0.1,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
+                    if (widget.description.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        widget.description,
+                        style: TextStyle(
+                          color: widget.isSelected
+                              ? AppColors.primary.withOpacity(0.65)
+                              : Colors.white.withOpacity(0.32),
+                          fontSize: 10,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ],
           ),

@@ -57,8 +57,9 @@ class _MainNavigationState extends State<MainNavigation> {
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       floatingActionButton: Container(
-        height: 72,
-        width: 72,
+        margin: const EdgeInsets.only(top: 20),
+        height: 80,
+        width: 80,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           gradient: const LinearGradient(
@@ -93,57 +94,37 @@ class _MainNavigationState extends State<MainNavigation> {
           backgroundColor: Colors.transparent,
           elevation: 0,
           highlightElevation: 0,
-          shape: const CircleBorder(),
           child: Image.asset(
             'assets/images/gemini_logo.png',
-            width: 50,
-            height: 50,
+            width: 58,
+            height: 58,
             fit: BoxFit.contain,
           ),
         ),
       ),
-      bottomNavigationBar: ClipRRect(
+      bottomNavigationBar: ClipRect(
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
           child: Container(
+            padding: const EdgeInsets.only(top: 12, bottom: 20, left: 16, right: 16),
             decoration: BoxDecoration(
-              // Match app background color (0xFF0A0A0A) with glass opacity
-              color: const Color(0xFF0A0A0A).withOpacity(0.82),
+              color: (isDark ? Colors.black : Colors.white).withOpacity(0.7),
               border: Border(
                 top: BorderSide(
-                  // Subtle gold-tinted separator line
-                  color: AppColors.primary.withOpacity(0.18),
-                  width: 0.6,
+                  color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
+                  width: 1,
                 ),
               ),
             ),
-            child: BottomAppBar(
-              shape: const CircularNotchedRectangle(),
-              notchMargin: 12.0,
-              color: Colors.transparent, // Let parent Container control the color
-              elevation: 0,
-              padding: EdgeInsets.zero, // Remove default padding — we handle it manually
-              child: SafeArea(
-                top: false,
-                bottom: true,
-                child: Padding(
-                  // Inset items from edges for breathing room
-                  padding: const EdgeInsets.symmetric(horizontal: 20.0),
-                  child: SizedBox(
-                    height: 64,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _buildNavItem(0, Icons.home_rounded, Icons.home_outlined, 'Home'),
-                        _buildNavItem(1, Icons.menu_book_rounded, Icons.menu_book_outlined, 'Recipes'),
-                        const SizedBox(width: 52), // Space for FAB notch
-                        _buildNavItem(2, Icons.chat_bubble_rounded, Icons.chat_bubble_outline_rounded, 'Chat'),
-                        _buildNavItem(3, Icons.person_rounded, Icons.person_outline_rounded, 'Profile'),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _buildNavItem(0, Icons.home_rounded, 'Home', isDark),
+                _buildNavItem(1, Icons.menu_book_rounded, 'Recipes', isDark),
+                const SizedBox(width: 48), // Space for FAB
+                _buildNavItem(2, Icons.chat_bubble_rounded, 'Chat', isDark),
+                _buildNavItem(3, Icons.person_rounded, 'Profile', isDark),
+              ],
             ),
           ),
         ),
@@ -151,56 +132,55 @@ class _MainNavigationState extends State<MainNavigation> {
     );
   }
 
-  Widget _buildNavItem(int index, IconData activeIcon, IconData inactiveIcon, String label) {
+  Widget _buildNavItem(int index, IconData icon, String label, bool isDark,
+      {bool isSpecial = false}) {
     final isSelected = _currentIndex == index;
-    final selectedColor = AppColors.primary;
-    final unselectedColor = Colors.white.withOpacity(0.45);
-
-    // Detect mobile vs tablet/desktop for label visibility
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isMobile = screenWidth < 600;
+    final selectedColor = isSpecial ? Colors.white : AppColors.primary;
+    final unselectedColor =
+        (isDark ? Colors.white : Colors.black).withOpacity(0.5);
 
     return GestureDetector(
       onTap: () => _onNavTap(index),
       behavior: HitTestBehavior.opaque,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOutCubic,
+      child: Container(
         padding: EdgeInsets.symmetric(
-          horizontal: isSelected ? 16.0 : 12.0,
-          vertical: 8.0,
+          horizontal: isSelected ? 16 : 12,
+          vertical: 8,
         ),
-        decoration: BoxDecoration(
-          // Gold pill background only for selected item
-          color: isSelected
-              ? AppColors.primary.withOpacity(0.15)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(50),
-          border: isSelected
-              ? Border.all(
-                  color: AppColors.primary.withOpacity(0.25),
-                  width: 0.8,
-                )
-              : null,
-        ),
+        decoration: isSpecial && isSelected
+            ? BoxDecoration(
+                gradient: AppColors.warmGradient,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primary.withOpacity(0.4),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              )
+            : BoxDecoration(
+                color: isSelected
+                    ? AppColors.primary.withOpacity(0.1)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(24),
+              ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              isSelected ? activeIcon : inactiveIcon,
+              icon,
               color: isSelected ? selectedColor : unselectedColor,
-              size: 22,
+              size: isSelected ? 26 : 24,
             ),
-            // Show label only when selected AND not mobile
-            if (isSelected && !isMobile) ...[
-              const SizedBox(width: 7),
+            if (isSelected) ...[
+              const SizedBox(width: 8),
               Text(
                 label,
                 style: TextStyle(
                   color: selectedColor,
                   fontWeight: FontWeight.w600,
                   fontSize: 13,
-                  letterSpacing: 0.3,
                 ),
               ),
             ],

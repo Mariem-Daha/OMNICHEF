@@ -44,10 +44,47 @@ app.*.map.json
 
 # Backend
 backend/.env
+backend/*.env
 backend/venv/
+backend/cuisinee.db
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Secrets / credentials
+*.json.key
+gcp-service-account.json
+*-credentials.json
+*service-account*.json
+*.p12
+*.pem
+
+# Internal development notes (not for public repo)
+AI_ASSISTANT_FIX_SUMMARY.md
+AI_PRODUCT_ARCHITECTURE.md
+CRITICAL_FIX_APPLIED.md
+DEPLOYMENT_PROOF.md
+Guide_for_Brahim.md
+HACKATHON_DEMO_SCRIPT.md
+IMPLEMENTATION_CHECKLIST.md
+MIC_NOT_OPENING_DEBUG.md
+NUGET_INSTALL_GUIDE.md
+QUICK_START_GUIDE.md
+RUN_ON_CHROME.md
+TESTING_CHECKLIST.md
+TEST_WEBSOCKET.md
+VOICE_FIXES_APPLIED.md
+VOICE_TESTING_GUIDE.md
+VOICE_FIXES_APPLIED.md
+WEBSOCKET_403_FIX.md
+ai_implementation.md
+backend/PRODUCTION_CHECKLIST.md
+frontend/WINDOWS_BUILD_FIX.md
+
+# Scripts data / checkpoints
+scripts/*.json
+scripts/*.html
+scripts/temp_doc_content.txt
 
 # Firebase
 .firebase/

@@ -1,6 +1,223 @@
-# Cuisinee - AI-Powered Cooking Assistant
+# OMNICHEF — AI-Powered Cooking Assistant
 
-A beautiful, modern Flutter application designed for Mauritanian and MENA households to cook healthier, personalized, culturally accurate meals while reducing food waste.
+OMNICHEF is a full-stack AI cooking assistant built with Flutter (frontend) and FastAPI (backend). It helps users discover culturally authentic Mauritanian and MENA recipes, reduce food waste, and get real-time AI cooking guidance through voice and chat.
+
+---
+
+## Features
+
+- **AI Chat & Voice Assistant** — Real-time cooking guidance powered by Gemini Live API (WebSocket)
+- **Smart Recipe Discovery** — AI-powered suggestions based on ingredients, preferences, and health needs
+- **Ingredient Vision** — Photograph your fridge; OMNICHEF identifies ingredients and suggests recipes
+- **Low-Waste Cooking** — Input leftovers and get matching recipes
+- **Health-Aware Filtering** — Filter by diabetes, hypertension, anemia, and more
+- **Culturally Authentic Library** — Curated Mauritanian and MENA recipes
+- **Personalized Profiles** — Taste preferences, dietary restrictions, saved recipes
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Flutter (Dart) |
+| Backend | FastAPI (Python 3.11) |
+| Database | PostgreSQL (Supabase) |
+| AI | Google Gemini 2.5 Flash (Gemini Live + Vision) |
+| Realtime | WebSocket (Gemini Live API) |
+| Auth | JWT (python-jose) |
+| Hosting | Google Cloud Run |
+
+---
+
+## Project Structure
+
+```
+omnichef/
+├── frontend/          # Flutter app
+│   └── lib/
+│       ├── core/      # Theme, providers, models, services
+│       └── features/  # Screens: home, chat, recipes, auth, profile
+├── backend/           # FastAPI server
+│   ├── app/
+│   │   ├── routers/   # API endpoints
+│   │   ├── models/    # SQLAlchemy models
+│   │   ├── schemas/   # Pydantic schemas
+│   │   ├── services/  # Business logic
+│   │   └── config.py  # Settings (env vars)
+│   ├── schema.sql     # Database schema
+│   └── requirements.txt
+└── scripts/           # One-off data scripts (seeding, image generation)
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- [Flutter SDK](https://docs.flutter.dev/get-started/install) ≥ 3.19
+- Python 3.11+
+- A [Supabase](https://supabase.com) project (PostgreSQL)
+- A [Google Gemini API key](https://aistudio.google.com/app/apikey)
+
+---
+
+### Backend Setup
+
+```bash
+cd backend
+
+# 1. Create and activate virtual environment
+python -m venv venv
+# Windows:
+venv\Scripts\activate
+# macOS/Linux:
+source venv/bin/activate
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Configure environment
+copy .env.example .env   # Windows
+cp .env.example .env     # macOS/Linux
+# Edit .env and fill in your values (see .env.example for all keys)
+
+# 4. Apply database schema
+# Run the contents of schema.sql in your Supabase SQL Editor
+
+# 5. Start the server
+uvicorn app.main:app --reload
+```
+
+The API will be available at `http://localhost:8000`.  
+Interactive docs: `http://localhost:8000/docs`
+
+---
+
+### Frontend Setup
+
+```bash
+cd frontend
+
+# 1. Get Flutter dependencies
+flutter pub get
+
+# 2. Set the backend URL
+# Edit lib/core/services/api_service.dart → change baseUrl to your backend address
+
+# 3. Run the app
+flutter run                  # connected device / emulator
+flutter run -d chrome        # web browser
+flutter run -d windows       # Windows desktop
+```
+
+---
+
+## Environment Variables
+
+Copy `backend/.env.example` to `backend/.env` and fill in the values below.  
+**Never commit `.env` to version control.**
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string (Supabase) |
+| `SECRET_KEY` | JWT signing secret — generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+| `GEMINI_API_KEY` | Google Gemini API key |
+| `VERTEX_PROJECT_ID` | GCP project ID (for Gemini Live via Vertex AI) |
+| `VERTEX_LOCATION` | GCP region, e.g. `us-central1` |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to GCP service account JSON (optional) |
+| `ALLOWED_ORIGINS` | Comma-separated CORS origins |
+
+---
+
+## API Endpoints
+
+### Recipes
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/recipes` | List all recipes |
+| GET | `/api/recipes/{id}` | Get recipe by ID |
+| GET | `/api/recipes/search?q=` | Full-text search |
+| GET | `/api/recipes/cuisine/{cuisine}` | Filter by cuisine |
+| GET | `/api/recipes/leftovers?ingredients=` | Match by available ingredients |
+
+### Auth
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/auth/register` | Create account |
+| POST | `/api/auth/login` | Login — returns JWT |
+| GET | `/api/auth/me` | Current user (JWT required) |
+
+### AI
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/vision/analyze` | Identify ingredients from image |
+| WS | `/ws/companion` | Gemini Live voice session |
+
+---
+
+## Reproducible Testing
+
+### 1. Backend Unit & Integration Tests
+
+```bash
+cd backend
+# Activate your venv first
+pip install -r requirements.txt
+
+# Run the included test scripts (requires a running server on port 8000)
+python test_ws_simple.py          # Basic WebSocket connectivity
+python test_websocket.py          # Full voice companion WebSocket flow
+python test_multiturn.py          # Multi-turn conversation test
+```
+
+### 2. API Smoke Tests (curl)
+
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# Register a test user
+curl -X POST http://localhost:8000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@omnichef.ai","password":"Test1234!","name":"Tester"}'
+
+# List recipes
+curl http://localhost:8000/api/recipes
+```
+
+### 3. Flutter Widget & Integration Tests
+
+```bash
+cd frontend
+
+# Run all unit/widget tests
+flutter test
+
+# Run integration tests (requires a connected device or emulator)
+flutter test integration_test/
+
+# Analyze for lints and type errors
+flutter analyze
+```
+
+### 4. End-to-End Demo Flow
+
+1. Start the backend: `uvicorn app.main:app --reload` (inside `backend/`)
+2. Launch the Flutter app: `flutter run` (inside `frontend/`)
+3. Register a new account on the Sign Up screen
+4. Navigate to **AI Chat** — type or speak a cooking question
+5. Navigate to **Leftover Mode** — enter ingredients like `chicken, tomato`
+6. Navigate to **Recipe Library** — browse and filter by health tag
+7. Open any recipe → tap **Start Cooking** for step-by-step mode
+
+---
+
+## License
+
+MIT License
+
 
 ## Features
 

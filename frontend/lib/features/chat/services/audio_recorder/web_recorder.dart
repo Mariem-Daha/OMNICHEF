@@ -29,7 +29,9 @@ class WebRecorder implements BaseRecorder {
   @override
   Future<bool> startRecording(RecordingConfig config) async {
     if (await _recorder.hasPermission()) {
-      _chunkController = StreamController<Uint8List>();
+      // Broadcast so multiple subscribers (listening vs barge-in) can attach/
+      // detach without buffering stale chunks or blocking each other.
+      _chunkController = StreamController<Uint8List>.broadcast();
       
       const recordConfig = RecordConfig(
         encoder: AudioEncoder.pcm16bits,

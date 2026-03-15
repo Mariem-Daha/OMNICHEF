@@ -110,20 +110,19 @@ Violating this causes you to repeat yourself. Silence before the call, speech af
    Use this ONLY when no cooking step is active, or for a general timer.
    This shows a standalone countdown widget separate from the step display.
 
-6. start_step_timer(minutes) → Voice-activated step timer. Call this AFTER you
-   finish narrating a cooking step that mentions a time duration.
+6. start_step_timer(minutes) → Voice-activated step timer. Call this ONLY after the
+   user EXPLICITLY asks you to start the timer or confirms they are ready to time it.
    CRITICAL TIMER RULES:
-   • Read the step instruction carefully. If it says "cook for 8-10 minutes",
-     call start_step_timer(9) — use the midpoint, NOT a default like 6.
-   • If the step mentions "1 minute" and then "8 minutes" for different actions,
-     call start_step_timer(8) for the dominant cooking time.
-   • NEVER set a timer without first reading the step text to confirm the duration.
-   • If you are unsure of the duration, say: "This step mentions [X] minutes —
-     starting the timer now!" so the user can verify.
-   • After calling: "Timer is running! I'll let you know when it's done."
+   • NEVER call this automatically after narrating a step. Always ask first:
+     "This step takes [X] minutes — shall I start the timer?"
+     Wait for the user to say "yes", "start it", "go ahead", "sure", "ok" etc.
+   • Read the step instruction carefully for the duration. If it says "cook for 8-10 minutes",
+     ask about 9 minutes (midpoint). If there are two durations, ask about the main one.
+   • After the user confirms AND you call the tool: say "Timer started! I'll let you know when it's done."
+   • If the user says "yes" or "start" without a prior timer mention, ask: "Timer for how long?"
 
 7. advance_cooking_step()  → Call this ONLY when the user EXPLICITLY AND UNAMBIGUOUSLY
-   states they have FINISHED the current step. Strict allowed triggers:
+   states they have FINISHED the current step AND are ready to move on. Strict triggers:
    "next", "next step", "I'm done", "I'm ready", "done", "finished",
    "I'm finished", "I did it", "I did that", "move on", "let's move on",
    "I completed that", "step done", "I've done it", or "skip".
@@ -135,10 +134,15 @@ Violating this causes you to repeat yourself. Silence before the call, speech af
      the physical step.
    • The user is asking a question about the step.
    • The user comments ("that smells good", "it looks ready", "got it").
-   • You are even slightly unsure. When ambiguous, ask: "Are you done with
-     that step? Just say 'next' when you're ready!"
+   • You are even slightly unsure. When ambiguous, ask: "Have you finished that step?
+     Just say 'next' when you're ready to move on!"
    ALSO call it if the user asks "do I press next?" or "should I tap something?"
    — respond "No need, I've got the controls!" then call it immediately.
+
+   AFTER NARRATING EACH STEP — ALWAYS end with a clear confirmation prompt:
+   "Take your time and let me know when you're done with that step!" or
+   "Just say 'next' whenever you're ready to move on."
+   NEVER assume the user is done. NEVER move to the next step unless they say so.
 
 ═══ UI SYNC WORKFLOW (NON-NEGOTIABLE — FOLLOW EXACTLY) ═══
 This is the most critical rule. When a user confirms a recipe:
@@ -149,9 +153,17 @@ This is the most critical rule. When a user confirms a recipe:
            "the first one", "make that", etc.)
   STEP D: IMMEDIATELY call get_recipe_details(id) using the ID from step A results.
            Do NOT speak before this call.
-  STEP E: After get_recipe_details returns, say something like:
-           "Perfect! I've loaded it up. Let's start with step 1..." then read step 1.
-  STEP F: After narrating a step, WAIT for the user to say they are ready.
+  STEP E: After get_recipe_details returns, greet the recipe in ONE short sentence
+           (e.g. "Perfect, I've loaded it up!"), then narrate step 1 in 2–3 spoken
+           sentences covering the KEY action. Do NOT read the full written instruction
+           word-for-word — paraphrase it naturally as a chef would explain it aloud.
+           End with: "Take your time — just say 'next' when you're ready!"
+           Example: "Step 1 — heat some olive oil in a large pot over medium heat.
+           Once it's shimmering, add your onions and cook until soft, about five
+           minutes. Take your time — just say 'next' when you're ready!"
+  STEP F: After narrating a step, ALWAYS end with: "Take your time — just say 'next'
+           when you're done and ready to move on." Then WAIT. Do NOT advance until
+           the user explicitly confirms they have finished.
            When they do, call advance_cooking_step() BEFORE narrating the next step.
 
 NEVER start reading a recipe's instructions without first calling get_recipe_details().
@@ -175,15 +187,18 @@ If the user says anything like "what happened?", "you cut off", "I missed that",
 - Always have something great to show — the database always provides fallbacks.
 
 ═══ VOICE RESPONSE RULES ═══
-- For recipe steps: read the FULL instruction clearly — do NOT cut off mid-sentence.
-  Complete each thought. The UI displays bullet points so you don't need to list
-  every sub-action; just narrate the key actions naturally.
+- For recipe steps: narrate each step in 2–3 natural spoken sentences that cover
+  the KEY action. Do NOT read the written instruction word-for-word — paraphrase
+  it as a chef explaining to a friend. The UI shows the full text so the user can
+  read along; your job is to guide, not to recite.
+  Always complete your sentence — never stop mid-thought.
 - Never read long ingredient lists aloud — say "I've shown you the full list on screen."
 - When showing recipes visually, say "I've pulled that up on your screen!" and summarize.
-- For step timers: after narrating the step, call start_step_timer(n) with the
-  EXACT minutes from the step text. Say "Timer is running!" after the call.
+- For step timers: after narrating the step, ASK the user if they want the timer started.
+  Say: "This step takes [X] minutes — want me to start the timer?"
+  Only call start_step_timer(n) AFTER they confirm. Never auto-start it.
 - For standalone timers (user requests): call set_timer(n).
-- End each step with: "Ready? Just say 'next' when you want to move on."
+- End each step with: "Take your time — just say 'next' when you're done!"
 
 ═══ HEALTH-FIRST COOKING (CRITICAL) ═══
 Cuisinee is used by people with chronic conditions common in Mauritania:
@@ -954,6 +969,9 @@ class GeminiLiveSession:
                             logger.debug("🔇 Dropping pre-tool audio to prevent double-speech")
                         elif hasattr(response, 'data') and response.data:
                             logger.info(f"🔊 Gemini audio chunk: {len(response.data)} bytes")
+                            # Client already disconnected — stop processing immediately.
+                            if not self.is_active:
+                                break
                             if self._interrupted:
                                 logger.debug("🔇 Dropping audio chunk (barge-in)")
                                 continue
@@ -961,8 +979,12 @@ class GeminiLiveSession:
                             # Sending it on every chunk doubles WS traffic and causes
                             # spurious Thinking... state flickers on the client.
                             if not self._ai_generating_sent:
-                                await self.websocket.send_json({"type": "ai_generating"})
-                                self._ai_generating_sent = True
+                                try:
+                                    await self.websocket.send_json({"type": "ai_generating"})
+                                    self._ai_generating_sent = True
+                                except Exception:
+                                    self.is_active = False
+                                    break
                             audio_data = response.data
                             try:
                                 if isinstance(audio_data, bytes):
@@ -993,6 +1015,12 @@ class GeminiLiveSession:
                                 self.messages_sent += 1
                             except Exception as e:
                                 self.errors += 1
+                                err_str = str(e)
+                                # WebSocket already closed — stop trying to send.
+                                if "websocket.send" in err_str or "response already completed" in err_str or "disconnect" in err_str.lower():
+                                    logger.info("🔌 WebSocket closed — stopping audio forwarding")
+                                    self.is_active = False
+                                    break
                                 logger.error(f"❌ Audio processing failed: {e}")
                                 continue
 
@@ -1020,25 +1048,47 @@ class GeminiLiveSession:
                         if not transcript_text and hasattr(response, 'text') and response.text:
                             transcript_text = response.text
 
-                        if transcript_text:
-                            logger.info(f"Gemini: {transcript_text[:80]}")
-                            await self.websocket.send_json({"type": "transcript", "text": transcript_text})
-                            self.messages_sent += 1
+                        if transcript_text and self.is_active:
+                            try:
+                                logger.info(f"Gemini: {transcript_text[:80]}")
+                                await self.websocket.send_json({"type": "transcript", "text": transcript_text})
+                                self.messages_sent += 1
+                            except Exception:
+                                self.is_active = False
+                                break
 
                         # ── Turn completion ───────────────────────────────────
-                        if hasattr(response, 'server_content') and response.server_content:
+                        if self.is_active and hasattr(response, 'server_content') and response.server_content:
                             sc = response.server_content
                             if getattr(sc, 'turn_complete', False):
                                 logger.info("✅ Turn complete")
                                 self._ai_generating_sent = False  # reset for next AI turn
-                                await self.websocket.send_json({"type": "turn_complete"})
+                                try:
+                                    await self.websocket.send_json({"type": "turn_complete"})
+                                except Exception:
+                                    self.is_active = False
+                                    break
                             if getattr(sc, 'interrupted', False):
                                 logger.info("⚡ Gemini interrupted")
                                 self._ai_generating_sent = False
-                                await self.websocket.send_json({"type": "interrupted"})
+                                try:
+                                    await self.websocket.send_json({"type": "interrupted"})
+                                except Exception:
+                                    self.is_active = False
+                                    break
 
                     # receive() exhausted for this turn — loop to await next turn
                     logger.info("🔄 receive() ended — ready for next user turn")
+                    # Reset the double-EOT guard after every complete AI turn.
+                    # If the server VAD fired during this turn, _eot_sent_this_turn
+                    # is still True.  Without resetting here, the flag stays True
+                    # into the NEXT user turn; if that user's voice falls below the
+                    # VAD energy threshold (is_speech never fires) the flag never
+                    # resets via the normal path and every client end_of_turn gets
+                    # suppressed — Gemini never receives turn_complete and freezes.
+                    self._eot_sent_this_turn = False
+                    self._user_was_speaking = False
+                    self._post_speech_silence_frames = 0
 
                 except websockets.exceptions.ConnectionClosedOK as cls_err:
                     logger.info("🔌 Gemini session closed gracefully by server (1000 OK)")

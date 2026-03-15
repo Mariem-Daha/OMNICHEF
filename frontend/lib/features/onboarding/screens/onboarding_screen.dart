@@ -1,25 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../../../core/theme/app_colors.dart';
-import '../../../core/services/preferences_service.dart';
-import 'preference_quiz_screen.dart';
-import '../../navigation/main_navigation.dart';
+import '../../auth/screens/login_screen.dart';
 
 class OnboardingScreen extends StatelessWidget {
   const OnboardingScreen({super.key});
 
-  void _onEnterKitchen(BuildContext context) async {
-    final bool setupDone = await PreferencesService().hasCompletedSetup();
-    if (!context.mounted) return;
-
+  void _navigateToLogin(BuildContext context) {
     Navigator.pushReplacement(
       context,
       PageRouteBuilder(
-        pageBuilder: (_, __, ___) => setupDone
-            ? const MainNavigation()
-            : const PreferenceQuizScreen(),
-        transitionsBuilder: (_, animation, __, child) =>
-            FadeTransition(opacity: animation, child: child),
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const LoginScreen(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
         transitionDuration: const Duration(milliseconds: 600),
       ),
     );
@@ -169,7 +164,7 @@ class OnboardingScreen extends StatelessWidget {
                             width: double.infinity,
                             height: 58,
                             child: ElevatedButton(
-                              onPressed: () => _onEnterKitchen(context),
+                              onPressed: () => _navigateToLogin(context),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: AppColors.primary,
                                 foregroundColor: Colors.black,

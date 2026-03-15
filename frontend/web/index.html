@@ -381,16 +381,19 @@
           // With streaming, multiple chunks may be queued ahead in the scheduler.
           // Using just buf.duration would fire speak_end prematurely while earlier
           // chunks are still playing.
-          // The 0.80 s grace period (up from 0.25 s) covers the gap introduced
-          // when the AI calls a function (e.g. start_step_timer) mid-turn: the
-          // function response audio typically arrives 300–700 ms after the last
-          // narration chunk, so 0.80 s ensures speak_end never fires inside that
-          // window and ends the turn prematurely.
+          // The 1.20 s grace period covers the gap introduced when the AI calls a
+          // function (e.g. get_recipe_details, find_recipe) mid-turn: the function
+          // response audio typically arrives 500–1100 ms after the last narration
+          // chunk (network + Gemini processing), so 1.20 s ensures speak_end
+          // never fires inside that window and cuts off the recipe step narration.
+          // (Previously 0.80 s — increased because tool calls on the deployed
+          // Cloud Run backend can take up to ~1 s round-trip, causing speak_end
+          // to fire before \'Step 1, Step 2...' audio arrived, dropping it all.)
           const remainingPlay = Math.max(0, this._playTime - this._playCtx.currentTime);
           this._silenceTimer = setTimeout(() => {
             this._isSpeaking = false;
             window.postMessage({ source: 'CuisineeAudio', type: 'speak_end' }, '*');
-          }, Math.ceil((remainingPlay + 0.80) * 1000));
+          }, Math.ceil((remainingPlay + 1.20) * 1000));
 
         } catch (err) {
           console.error('[CuisineeAudio] Playback error:', err);

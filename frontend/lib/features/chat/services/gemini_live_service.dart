@@ -322,6 +322,18 @@ class GeminiLiveService {
     } catch (e) {
       print('⚠️ Error stopping barge-in monitoring: $e');
     }
+
+    // Fully stop the recorder on session end.
+    // During a live session, the recorder is kept alive between turns (always-on
+    // mic). Only here, on disconnect, do we shut it down.
+    try {
+      if (_recorder != null && _recorder!.isRecording()) {
+        await _recorder!.stopRecording();
+        print('🎤 Recorder stopped (session end)');
+      }
+    } catch (e) {
+      print('⚠️ Error stopping recorder: $e');
+    }
     
     // Stop audio playback
     try {
@@ -477,6 +489,17 @@ class GeminiLiveService {
             // _playBufferedAudio() on native when the old TC fires.
             if (_state != LiveState.listening) {
               _interruptPending = false;
+              // Edge case: barge-in fired but the new AI turn produced no audio
+              // (tool-only response or empty turn) so 'ai_generating' was never
+              // sent and _interruptPending was never cleared through that path.
+              // State is now stuck at processing — restart the mic so the user
+              // can speak again instead of the assistant silently freezing.
+              if (_state == LiveState.processing) {
+                _setState(LiveState.connected);
+                Future.delayed(const Duration(milliseconds: 300), () {
+                  if (isConnected && _state == LiveState.connected) startListening();
+                });
+              }
             }
           }
         } else {
@@ -682,6 +705,14 @@ class GeminiLiveService {
       _interruptPending = false;
       _audioBuffer.clear();
       print('⏩ Skipping buffered audio — barge-in was requested during buffering');
+      // Restart the mic if not already listening.  Without this, state stays
+      // at processing indefinitely when the new AI turn has no audio output
+      // (tool-only or empty turn means 'ai_generating' is never sent and
+      // _interruptPending is never cleared through that path).
+      if (_state != LiveState.listening) {
+        _setState(LiveState.connected);
+        if (isConnected) startListening();
+      }
       return;
     }
 
@@ -846,6 +877,21 @@ class GeminiLiveService {
     print('✅ All checks passed - starting recorder...');
     _interruptPending = false;  // Clear stale interrupt flag for new turn
 
+    // If the recorder is already running (kept alive between turns or in
+    // barge-in mode), skip the stop+restart cycle — just cancel the old
+    // subscription and re-subscribe the listening forwarder immediately.
+    // This eliminates the 200-1000ms getUserMedia() gap that was preventing
+    // barge-in detection on the NEXT AI turn.
+    if (_recorder != null && _recorder!.isRecording()) {
+      await _bargeInSubscription?.cancel();
+      _bargeInSubscription = null;
+      _isStreaming = true;
+      _setState(LiveState.listening);
+      _streamAudioChunks();
+      print('✅ Audio streaming started (recorder kept alive — no restart needed)');
+      return true;
+    }
+
     await _ensureRecorderStopped();
 
     try {
@@ -910,9 +956,10 @@ class GeminiLiveService {
       await _audioChunkSubscription?.cancel();
       _audioChunkSubscription = null;
 
-      if (_recorder != null && _recorder!.isRecording()) {
-        await _recorder!.stopRecording();
-      }
+      // Keep the recorder running!  Instead of stop+restart on every turn,
+      // the mic stays live for the whole session and _startBargeInMonitoring()
+      // takes ownership via the broadcast stream without any getUserMedia() gap.
+      // The recorder is only shut down in _forceCleanup() when the session ends.
 
       _sendEndOfTurn();
 
@@ -1101,27 +1148,40 @@ class GeminiLiveService {
 
     print('🎤 Barge-in monitoring active (prePlayback=$isPrePlayback)');
 
-    // Barge-in threshold: 2.5× the effective noise floor.
-    // Residual AEC echo is typically 0.02–0.05 RMS; human speech 0.08–0.40.
-    // 2.5× ambient floor catches normal conversational speech while still
-    // rejecting echo transients, which are typically below 2× the floor.
+    // Barge-in threshold: same as the effective noise floor (no extra multiplier).
+    // Cap the noise floor at 0.006 so a noisy session can never push the threshold
+    // above 0.036 (0.006 × 6.0). The 6× headroom already provides strong echo
+    // rejection. The previous 2.0× multiplier on top pushed max threshold to
+    // 0.072 which required raised voice to trigger barge-in — now removed.
+    // With cap=0.006 + multiplier=1.0, max threshold ≤0.036 — reliably triggered
+    // by normal conversational speech (0.04–0.40 RMS).
+    final _bargeInNoiseFloor = math.min(_adaptiveNoiseFloor, 0.006);
     final bargeInThreshold = math.max(
       _vadEnergyThreshold,
-      _adaptiveNoiseFloor * _noiseFloorHeadroom,
-    ) * 3.5;
+      _bargeInNoiseFloor * _noiseFloorHeadroom,
+    ) * 1.0;
 
     // Startup delay: skip chunks during AEC convergence.
     // • isPrePlayback=true  → 120 ms (speakers silent, hardware settling only)
-    // • isPrePlayback=false → 200 ms (browser AEC converges within ~200 ms)
-    // Keeping this short is critical for perceived interruptibility.
+    // • isPrePlayback=false → 450 ms (browser AEC needs 300–400 ms to converge;
+    //   200 ms was too short and caused the AI's speaker output to leak into the
+    //   mic before AEC learned the echo pattern, triggering false barge-ins that
+    //   repeatedly cut the AI mid-sentence when listing recipe steps).
+    // 450 ms still feels responsive for intentional interruptions (a short word
+    // like "stop" lasts 200–400 ms, so 450 ms + detection window ≈ 700 ms total).
     final startupDelay = isPrePlayback
-        ? const Duration(milliseconds: 200)
-        : const Duration(milliseconds: 400);
+        ? const Duration(milliseconds: 120)
+        : const Duration(milliseconds: 450);
     final monitoringStart = DateTime.now();
 
-    // Require 2 consecutive loud chunks before triggering barge-in.
-    // At ~80–130 ms/chunk → 160–260 ms to confirm speech — fast enough to feel
-    // immediate while still rejecting single-chunk noise spikes.
+    // Require 3 consecutive loud chunks before triggering barge-in.
+    // At ~80–130 ms/chunk → 240–390 ms of sustained loud audio is needed.
+    // • 2 was too few: a single echo burst from the speaker (during AEC
+    //   convergence) spans 2+ chunks and caused repeated false interruptions
+    //   that cut the AI mid-sentence when narrating recipe steps.
+    // • 3 still catches intentional short words ("stop", "hey", "next") which
+    //   last 200–500 ms with consistently high energy, but rejects transient
+    //   noise spikes and AEC-convergence echo artifacts.
     int consecutiveLoudChunks = 0;
     const requiredConsecutiveChunks = 3;
 
@@ -1132,6 +1192,12 @@ class GeminiLiveService {
     // Gemini would respond to silence (or not respond at all).
     final List<Uint8List> recentChunkBuffer = [];
     const int maxBufferedChunks = 12; // ~1 second of audio coverage
+
+    if (_recorder!.audioChunkStream == null) {
+      print('⚠️ Barge-in: audioChunkStream is null — recorder may not be running!');
+    } else {
+      print('✅ Barge-in: subscribed to audio stream (threshold=${bargeInThreshold.toStringAsFixed(3)}, required=$requiredConsecutiveChunks chunks)');
+    }
 
     _bargeInSubscription = _recorder!.audioChunkStream?.listen((chunk) {
       // Allow interruption during both speaking AND processing (buffering) states.
@@ -1152,6 +1218,11 @@ class GeminiLiveService {
 
       final rms = _computeChunkRMS(chunk);
       onAmplitudeChanged?.call(rms.clamp(0.0, 1.0));
+
+      // Diagnostic: log RMS every ~1 second so threshold tuning is visible
+      if (recentChunkBuffer.length % 10 == 0) {
+        print('🎤 Barge-in RMS=${rms.toStringAsFixed(3)} threshold=${bargeInThreshold.toStringAsFixed(3)} consecutive=$consecutiveLoudChunks');
+      }
 
       if (rms > bargeInThreshold) {
         consecutiveLoudChunks++;
@@ -1237,14 +1308,12 @@ class GeminiLiveService {
   void _stopBargeInMonitoring({bool keepRecorder = false}) async {
     await _bargeInSubscription?.cancel();
     _bargeInSubscription = null;
-    // Only stop the recorder if it's running for barge-in (not in listening state)
-    if (!keepRecorder &&
-        _recorder != null &&
-        _recorder!.isRecording() &&
-        _state != LiveState.listening) {
-      await _recorder!.stopRecording();
-      print('🛑 Barge-in monitoring stopped');
-    }
+    // Do NOT stop the recorder — it stays alive between turns so the next call
+    // to _startBargeInMonitoring() or startListening() can reuse it immediately
+    // without a getUserMedia() round-trip (which cost 200-1000ms and was the
+    // root cause of barge-in never firing).
+    // keepRecorder param kept for API compatibility; recorder is always kept.
+    print('🛑 Barge-in monitoring subscription cancelled (recorder kept alive)');
   }
 
   /// Barge-in: immediately stop the AI's current audio output and let the user speak.

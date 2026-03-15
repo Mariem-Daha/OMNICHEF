@@ -7,7 +7,6 @@ import 'core/providers/user_provider.dart';
 import 'core/providers/recipe_provider.dart';
 import 'core/services/api_service.dart';
 import 'features/onboarding/screens/onboarding_screen.dart';
-import 'features/onboarding/screens/preference_quiz_screen.dart';
 import 'features/auth/screens/login_screen.dart';
 import 'features/navigation/main_navigation.dart';
 
@@ -58,7 +57,6 @@ class OmniChefApp extends StatelessWidget {
             routes: {
               '/onboarding': (context) => const OnboardingScreen(),
               '/login': (context) => const LoginScreen(),
-              '/preferences': (context) => const PreferenceQuizScreen(),
               '/home': (context) => const MainNavigation(),
             },
           );

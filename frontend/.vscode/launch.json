@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Flutter (Local Backend)",
+      "request": "launch",
+      "type": "dart",
+      "args": [
+        "--dart-define=API_URL=http://localhost:8000/api"
+      ]
+    },
+    {
+      "name": "Flutter (Production Backend)",
+      "request": "launch",
+      "type": "dart"
+    }
+  ]
+}
